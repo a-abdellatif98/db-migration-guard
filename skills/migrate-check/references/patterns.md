@@ -124,11 +124,11 @@ Detect from dependencies: `ros-apartment` / `apartment` (Rails), `django-tenants
 Row-level tenancy (`acts_as_tenant`) shares one schema: every new unique index must include the tenant column, e.g. `add_index :users, [:account_id, :email], unique: true`.
 
 ## 13. Rehearsing on a Sentinel Database
-For DANGEROUS changes, rehearse on a copy of production first. If `SENTINEL_DATABASE` is set (environment or `.env`), give the command that runs the migration against it, and time it:
+For DANGEROUS changes, suggest rehearsing on a sentinel database, a restored copy of production, and timing it. Give the command with `$SENTINEL_DATABASE` for the user's shell to expand:
 - Rails: `DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate`
 - Django: `DATABASE_URL="$SENTINEL_DATABASE" python manage.py migrate` (if settings read `DATABASE_URL`)
 - Laravel: `DB_URL="$SENTINEL_DATABASE" php artisan migrate` (`DATABASE_URL` before Laravel 11)
 - Prisma: `DATABASE_URL="$SENTINEL_DATABASE" npx prisma migrate deploy`
 - Knex: `DATABASE_URL="$SENTINEL_DATABASE" npx knex migrate:latest` (if the knexfile reads it)
 
-Never rehearse when `SENTINEL_DATABASE` equals `DATABASE_URL`, and never print its password. If it is not set, suggest restoring a recent backup and pointing `SENTINEL_DATABASE` at it.
+Never open `.env`, read database URLs, or print credentials. Remind the user the sentinel must never be production.

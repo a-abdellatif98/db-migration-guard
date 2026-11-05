@@ -35,7 +35,7 @@ DISABLE_MIGRATION_GUARD=1
 
 ### Database engine detection
 
-The hook walks up from the migration file to the git root and reads `config/database.yml`, `.env` / `config/database.php`, Prisma's `migration_lock.toml` / `schema.prisma`, then driver dependencies (`Gemfile.lock`, `requirements*.txt`, `pyproject.toml`, `package.json`). If it finds exactly one of PostgreSQL or MySQL, warnings use that engine's fix. Otherwise it shows advice for both.
+The hook walks up from the migration file to the git root and reads `config/database.yml`, `config/database.php`, Prisma's `migration_lock.toml` / `schema.prisma`, then driver dependencies (`Gemfile.lock`, `requirements*.txt`, `pyproject.toml`, `package.json`). If it finds exactly one of PostgreSQL or MySQL, warnings use that engine's fix. Otherwise it shows advice for both.
 
 ### Multi-tenant projects
 
@@ -50,7 +50,7 @@ The hook walks up from the migration file to the git root and reads `config/data
 
 ### Sentinel database
 
-Point `SENTINEL_DATABASE` at a copy of production (in your environment or `.env`). When a DANGEROUS change is found, the hook adds the exact command to rehearse the migration against it, e.g. `DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate`. The password is masked, and the hook refuses if `SENTINEL_DATABASE` equals `DATABASE_URL`. The hook never runs migrations itself.
+When a DANGEROUS change is found, the hook adds the command to rehearse the migration on a sentinel database, a restored copy of production, e.g. `DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate`. Export `SENTINEL_DATABASE` in your shell. The hook never reads `.env`, database URLs or any other credential, never runs migrations, and keeps its once-per-session state in the system temp folder.
 
 ### Slash Command
 
