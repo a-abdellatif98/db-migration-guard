@@ -17,37 +17,44 @@ This skill activates when:
 - Schema change operations are being planned
 - The user mentions dropping, renaming, or altering database columns/tables
 
+## Framework Detection
+
+- **Rails**: `db/migrate/`, files like `*_create_*.rb`
+- **Django**: `migrations/` inside app directories, files like `0001_initial.py`
+- **Laravel**: `database/migrations/`, PHP migration files
+- **Prisma**: `prisma/migrations/`, `migration.sql` files
+- **Knex/Sequelize**: `migrations/`, JS/TS files
+
 ## Safety Rules
 
-### Always Apply These Checks
+When a migration file is created or edited, check for these patterns. Per-framework syntax and the safe alternative for each are in `references/patterns.md`; read it when a pattern matches.
 
-When a migration file is created or edited, automatically check for:
+1. Dropping columns or tables (data loss, phased removal)
+2. Renaming columns or tables (deploy downtime, add/backfill/swap/drop)
+3. Changing column types (data compatibility, table locks)
+4. NOT NULL without a default (fails on populated tables)
+5. Non-concurrent indexes on PostgreSQL (write locks)
+6. Data migrations inside schema migrations (partial failure)
+7. Removing indexes (query regressions)
+8. Unique constraints on populated tables (duplicates)
 
-1. **Destructive operations**: `DROP`, `remove_column`, `drop_table`, `RemoveField`, `DeleteModel`
-   - Warn the user about data loss
-   - Suggest the phased removal pattern (stop writing, stop reading, then remove)
+## Risk Levels
 
-2. **Rename operations**: `rename_column`, `rename_table`, `RenameField`
-   - Warn about deployment downtime
-   - Suggest add/backfill/swap/drop pattern
+- **SAFE**: adding nullable columns, adding indexes concurrently, creating new tables
+- **WARNING**: adding NOT NULL with defaults, adding unique constraints, changing defaults
+- **DANGEROUS**: dropping columns/tables, renaming, type changes, removing indexes
 
-3. **Type changes**: `change_column`, `AlterField`, `ALTER COLUMN TYPE`
-   - Warn about data compatibility and table locks
-   - Suggest testing with production-like data
+## Safe Migration Checklist
 
-4. **NOT NULL without defaults**: `null: false` / `NOT NULL` without `default:`
-   - Warn this will fail on populated tables
-   - Suggest adding nullable first, then backfilling
+- [ ] Migration is reversible (has a `down` method or rollback strategy)
+- [ ] No data loss without explicit user confirmation
+- [ ] Large table operations use concurrent/batched approaches
+- [ ] Schema and data changes are separated
+- [ ] NOT NULL columns have defaults or are added in phases
+- [ ] Indexes are added concurrently for large tables
+- [ ] Foreign key constraints reference valid tables/columns
 
-5. **Non-concurrent indexes** (PostgreSQL): `add_index` without `algorithm: :concurrently`
-   - Warn about table write locks
-   - Provide the concurrent alternative with `disable_ddl_transaction!`
-
-6. **Mixed data and schema changes**
-   - Warn about partial failure risks
-   - Suggest splitting into separate migrations
-
-### Framework-Specific Guidance
+## Framework-Specific Guidance
 
 **Rails**:
 - Recommend `strong_migrations` gem for automated checks
