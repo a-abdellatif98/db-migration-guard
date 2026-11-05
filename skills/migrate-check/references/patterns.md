@@ -131,4 +131,4 @@ For DANGEROUS changes, suggest rehearsing on a sentinel database: a restored cop
 - Prisma: `npx prisma migrate deploy` from a shell configured for the copy
 - Knex: `npx knex migrate:latest --env sentinel` (a `sentinel` environment in the knexfile)
 
-Never open `.env`, read database URLs, or print credentials. Remind the user the sentinel must never be production.
+Never open environment files, read database URLs, or print credentials. Remind the user the sentinel must never be production.

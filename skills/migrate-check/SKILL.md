@@ -1,7 +1,7 @@
 ---
 name: migrate-check
 description: This skill should be used when the user creates or edits a database migration, mentions "migration safety", "schema change", "database migration", "add column", "drop column", "rename table", "migration review", or discusses database schema changes. Provides automatic safety analysis of migration files.
-version: 1.2.1
+version: 1.2.2
 ---
 
 # Migration Safety Check Skill
@@ -27,7 +27,7 @@ This skill activates when:
 
 ## Database Engine and Tenancy
 
-Before giving advice, find the engine from files that never hold secrets: Prisma `prisma/migrations/migration_lock.toml` provider or the driver in dependencies (`pg`/`psycopg` vs `mysql2`/`mysqlclient`/`trilogy`). PostgreSQL and MySQL need different fixes; if unknown, give both. Also check for multi-tenancy libraries (pattern 12), and for DANGEROUS changes suggest a sentinel rehearsal (pattern 13). Never open `.env`, `config/database.yml`, `config/database.php` or other files that can hold credentials.
+Before giving advice, find the engine from files that never hold secrets: Prisma `prisma/migrations/migration_lock.toml` provider or the driver in dependencies (`pg`/`psycopg` vs `mysql2`/`mysqlclient`/`trilogy`). PostgreSQL and MySQL need different fixes; if unknown, give both. Also check for multi-tenancy libraries (pattern 12), and for DANGEROUS changes suggest a sentinel rehearsal (pattern 13). Never open environment files, `config/database.yml`, `config/database.php` or other files that can hold credentials.
 
 ## Safety Rules
 
