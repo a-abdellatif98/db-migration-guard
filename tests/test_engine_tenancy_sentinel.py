@@ -41,8 +41,6 @@ def hook(tmp_path, files, rel, content, **kw):
      "migrations.AddIndex(model_name='t', index=i)", "PostgreSQL"),
     ({"pyproject.toml": 'dependencies = [\n  "mysqlclient>=2",\n]\n'}, DJANGO_REL,
      "migrations.AddIndex(model_name='t', index=i)", "MySQL"),
-    ({".env": "DB_CONNECTION=pgsql\n"}, LARAVEL_REL,
-     "Schema::table('t', function ($t) {\n  $t->string('c')->nullable(false);\n});", "PostgreSQL"),
     ({"config/database.php": "'default' => env('DB_CONNECTION', 'mysql'),"}, LARAVEL_REL,
      "Schema::table('t', function ($t) {\n  $t->string('c')->nullable(false);\n});", "MySQL"),
     (PRISMA_MYSQL, PRISMA_REL, 'CREATE INDEX i ON t(c);', "MySQL"),
@@ -283,56 +281,39 @@ def test_unique_without_tenant_needs_row_tenancy(tmp_path):
     assert "[WARNING] unique_without_tenant" not in ctx
 
 
-# SENTINEL_DATABASE rehearsal
+# SENTINEL_DATABASE rehearsal: credentials are never read
 
-def test_dangerous_without_sentinel_suggests_setting_it(tmp_path):
-    result = hook(tmp_path, PG_FILES, RAILS_REL, "remove_column :t, :c")
-    assert_blocked(result, "drop_column")
-    assert "Set SENTINEL_DATABASE" in result.stderr
-
-
-@pytest.mark.parametrize("rel,command", [
-    (RAILS_REL, "bin/rails db:migrate"),
-    (DJANGO_REL, "python manage.py migrate"),
-    (LARAVEL_REL, "php artisan migrate"),
-    (PRISMA_REL, "npx prisma migrate deploy"),
-    (KNEX_REL, "npx knex migrate:latest"),
+@pytest.mark.parametrize("rel,content,command", [
+    (RAILS_REL, "remove_column :t, :c", 'DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate'),
+    (DJANGO_REL, "migrations.RemoveField(model_name='t', name='c')", "python manage.py migrate"),
+    (LARAVEL_REL, "Schema::table('t', function ($t) {\n  $t->dropColumn('c');\n});",
+     'DB_URL="$SENTINEL_DATABASE" php artisan migrate'),
+    (PRISMA_REL, 'ALTER TABLE "t" DROP COLUMN "c";', "npx prisma migrate deploy"),
+    (KNEX_REL, "table.dropColumn('c')", "npx knex migrate:latest"),
 ])
-def test_sentinel_from_env_gives_command_and_masks_password(tmp_path, rel, command):
-    content = {
-        RAILS_REL: "remove_column :t, :c",
-        DJANGO_REL: "migrations.RemoveField(model_name='t', name='c')",
-        LARAVEL_REL: "Schema::table('t', function ($t) {\n  $t->dropColumn('c');\n});",
-        PRISMA_REL: 'ALTER TABLE "t" DROP COLUMN "c";',
-        KNEX_REL: "table.dropColumn('c')",
-    }[rel]
-    result = hook(tmp_path, {}, rel, content, env={"SENTINEL_DATABASE": "postgres://app:s3cret@shadow:5432/db"})
+def test_dangerous_gives_rehearsal_command(tmp_path, rel, content, command):
+    result = hook(tmp_path, {}, rel, content)
     assert result.returncode == 2
+    assert "never production" in result.stderr
     assert command in result.stderr
-    assert "postgres://app:***@shadow:5432/db" in result.stderr
-    assert "s3cret" not in result.stderr
 
 
-def test_sentinel_from_dotenv(tmp_path):
-    files = {".env": "DB_CONNECTION=mysql\nSENTINEL_DATABASE=mysql://root@shadow/db\n"}
-    result = hook(tmp_path, files, LARAVEL_REL, "Schema::table('t', function ($t) {\n  $t->dropColumn('c');\n});")
-    assert "mysql://root@shadow/db" in result.stderr
-    assert "DB_URL=" in result.stderr
-
-
-def test_sentinel_equal_to_database_url_is_refused(tmp_path):
-    url = "postgres://app:pw@prod/db"
-    result = hook(tmp_path, {}, RAILS_REL, "remove_column :t, :c",
-                  env={"SENTINEL_DATABASE": url, "DATABASE_URL": url})
-    assert "same as DATABASE_URL" in result.stderr
-    assert "bin/rails db:migrate" not in result.stderr
-    assert "pw" not in result.stderr
+def test_database_urls_are_never_read_or_printed(tmp_path):
+    secret = "postgres://app:s3cret@prod:5432/db"
+    files = {".env": f"DATABASE_URL={secret}\nSENTINEL_DATABASE={secret}\nDB_CONNECTION=pgsql\n"}
+    env = {"SENTINEL_DATABASE": secret, "DATABASE_URL": secret, "DB_URL": secret}
+    result = hook(tmp_path, files, LARAVEL_REL,
+                  "Schema::table('t', function ($t) {\n  $t->dropColumn('c');\n});", env=env)
+    assert result.returncode == 2
+    assert "s3cret" not in result.stderr + result.stdout
+    assert "prod:5432" not in result.stderr + result.stdout
+    assert "PostgreSQL" not in result.stderr
 
 
 def test_no_rehearsal_note_for_warnings_only(tmp_path):
-    result = hook(tmp_path, {}, RAILS_REL, "add_index :t, :c", env={"SENTINEL_DATABASE": "postgres://s/db"})
-    assert "SENTINEL" not in warning_context(result)
-    assert "Rehearse" not in warning_context(result)
+    ctx = warning_context(hook(tmp_path, {}, RAILS_REL, "add_index :t, :c"))
+    assert "SENTINEL" not in ctx
+    assert "Rehearse" not in ctx
 
 
 def test_ruby_references_inside_alter_file_is_not_sql_fk(tmp_path):
@@ -366,9 +347,3 @@ def test_walk_stops_at_cwd(tmp_path):
     (root / "db" / "migrate").mkdir(parents=True)
     ctx = warning_context(run_hook(tmp_path, str(root / RAILS_REL), "add_index :t, :c", cwd=root))
     assert "PostgreSQL" not in ctx
-
-
-def test_sentinel_equal_to_dotenv_database_url_is_refused(tmp_path):
-    files = {".env": "DATABASE_URL=mysql://prod/db\nSENTINEL_DATABASE=mysql://prod/db\n"}
-    result = hook(tmp_path, files, RAILS_REL, "remove_column :t, :c")
-    assert "same as DATABASE_URL" in result.stderr

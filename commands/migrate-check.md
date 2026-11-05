@@ -1,7 +1,7 @@
 ---
 description: Scan pending database migrations for safety risks and suggest improvements
 argument-hint: [path-to-migrations-dir]
-allowed-tools: [Read, Glob, Grep, Bash]
+allowed-tools: [Read, Glob, Grep]
 ---
 
 # Migration Safety Check
@@ -25,7 +25,7 @@ When this command is invoked:
 
    If the user provided a path argument, search within that path. Otherwise, search from the project root.
 
-   Then detect the database engine (PostgreSQL or MySQL) and any multi-tenancy library, and check whether `SENTINEL_DATABASE` is set. Follow `skills/migrate-check/references/patterns.md` (patterns 5 and 9 to 13) for engine-specific fixes, tenant fan-out, and the sentinel rehearsal command. Never print the sentinel URL's password.
+   Then detect the database engine (PostgreSQL or MySQL) and any multi-tenancy library. Never open `.env` or other files holding credentials. Follow `skills/migrate-check/references/patterns.md` (patterns 5 and 9 to 13) for engine-specific fixes, tenant fan-out, and the sentinel rehearsal command.
 
 2. **Find pending/recent migration files** using Glob. Sort by filename (most recent first). Read each migration file.
 
