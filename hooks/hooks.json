@@ -1,15 +1,17 @@
 {
-  "description": "Migration safety hook that warns about dangerous database operations when creating or editing migration files",
+  "description": "Blocks dangerous database migration edits (drops, renames, type changes, index removal) until the change is confirmed",
   "hooks": {
     "PreToolUse": [
       {
+        "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
-            "type": "command",
-            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/hooks/migration_safety_hook.py\""
+            "type": "prompt",
+            "prompt": "You are a database migration safety check. Hook input: $ARGUMENTS\n\n1. If tool_input.file_path is not a database migration, respond {\"ok\": true}. Migrations are: Rails db/migrate/*.rb, Django */migrations/*.py (not __init__.py), Laravel database/migrations/*.php, Prisma prisma/migrations/*/migration.sql, Knex or Sequelize migrations/*.js or *.ts.\n2. Look only at the new text (tool_input.content, tool_input.new_string, or each tool_input.edits[].new_string). Ignore comments and down or rollback methods.\n3. Respond {\"ok\": true} if the text contains the comment migration-guard: confirmed, or a Rails safety_assured block.\n4. Block only these DANGEROUS changes: dropping a column or table, renaming a column or table, changing a column's type, removing an index. Everything else is allowed, including adding columns, tables, indexes or constraints.\n5. For a DANGEROUS change respond {\"ok\": false, \"reason\": \"<change> in <file>: <one-line risk>. Safe pattern: <short steps>. If the user explicitly confirmed this change, add the comment migration-guard: confirmed to the migration and retry.\"}\n\nRespond with the JSON object only.",
+            "timeout": 30,
+            "continueOnBlock": true
           }
-        ],
-        "matcher": "Edit|Write|MultiEdit"
+        ]
       }
     ]
   }
