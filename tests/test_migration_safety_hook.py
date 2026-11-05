@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-HOOK = Path(__file__).resolve().parent.parent / "hooks" / "migration_safety_hook.py"
+HOOK = Path(__file__).resolve().parent.parent / "scripts" / "migration_safety_hook.py"
 
 RAILS = "/app/db/migrate/20260101000000_change_things.rb"
 DJANGO = "/app/shop/migrations/0002_change_things.py"

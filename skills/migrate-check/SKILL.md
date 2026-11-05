@@ -1,7 +1,7 @@
 ---
 name: migrate-check
 description: This skill should be used when the user creates or edits a database migration, mentions "migration safety", "schema change", "database migration", "add column", "drop column", "rename table", "migration review", or discusses database schema changes. Provides automatic safety analysis of migration files.
-version: 1.1.1
+version: 1.2.0
 ---
 
 # Migration Safety Check Skill
