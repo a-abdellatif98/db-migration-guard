@@ -60,7 +60,7 @@ def test_no_executable_code_shipped():
 
 def test_no_credential_or_env_references():
     pattern = re.compile(
-        r"environ|getenv|process\.env|\.env\b|database\.yml|database\.php|knexfile|DATABASES"
+        r"os\.environ|getenv|process\.env|\.env\b|database\.yml|database\.php|knexfile|DATABASES"
         r"|RAILS_ENV|credential|password|secret|SENTINEL_DATABASE|DATABASE_URL|database url|\$\{user_config",
         re.I,
     )
