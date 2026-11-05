@@ -1,7 +1,7 @@
 ---
 name: migrate-check
 description: This skill should be used when the user creates or edits a database migration, mentions "migration safety", "schema change", "database migration", "add column", "drop column", "rename table", "migration review", or discusses database schema changes. Provides automatic safety analysis of migration files.
-version: 1.0.0
+version: 1.1.0
 ---
 
 # Migration Safety Check Skill
@@ -25,6 +25,10 @@ This skill activates when:
 - **Prisma**: `prisma/migrations/`, `migration.sql` files
 - **Knex/Sequelize**: `migrations/`, JS/TS files
 
+## Database Engine and Tenancy
+
+Before giving advice, find the engine: `config/database.yml` adapter, Laravel `.env` `DB_CONNECTION`, Prisma `provider`, or the driver in dependencies (`pg`/`psycopg` vs `mysql2`/`mysqlclient`/`trilogy`). PostgreSQL and MySQL need different fixes; if unknown, give both. Also check for multi-tenancy libraries and `SENTINEL_DATABASE` (patterns 12 and 13).
+
 ## Safety Rules
 
 When a migration file is created or edited, check for these patterns. Per-framework syntax and the safe alternative for each are in `references/patterns.md`; read it when a pattern matches.
@@ -33,15 +37,20 @@ When a migration file is created or edited, check for these patterns. Per-framew
 2. Renaming columns or tables (deploy downtime, add/backfill/swap/drop)
 3. Changing column types (data compatibility, table locks)
 4. NOT NULL without a default (fails on populated tables)
-5. Non-concurrent indexes on PostgreSQL (write locks)
+5. Index builds that block writes (PostgreSQL CONCURRENTLY, MySQL ALGORITHM=INPLACE)
 6. Data migrations inside schema migrations (partial failure)
 7. Removing indexes (query regressions)
 8. Unique constraints on populated tables (duplicates)
+9. Foreign keys on existing tables (validation scan and locks)
+10. CHECK constraints and SET NOT NULL (full table scans)
+11. MySQL ALGORITHM=COPY / LOCK=EXCLUSIVE (blocking rebuilds)
+12. Multi-tenant fan-out and tenant-scoped unique indexes
+13. Rehearsal on a sentinel database for DANGEROUS changes
 
 ## Risk Levels
 
 - **SAFE**: adding nullable columns, adding indexes concurrently, creating new tables
-- **WARNING**: adding NOT NULL without a default, non-concurrent indexes, adding unique constraints, data changes inside schema migrations, changing defaults
+- **WARNING**: adding NOT NULL without a default, blocking index builds, unique constraints, unvalidated foreign keys and CHECKs, SET NOT NULL, MySQL COPY/LOCK clauses, data changes inside schema migrations, changing defaults
 - **DANGEROUS**: dropping columns/tables, renaming, type changes, removing indexes
 
 ## Safe Migration Checklist
@@ -83,6 +92,7 @@ When this skill activates, prepend the migration analysis before any other respo
 ```
 **Migration Safety Analysis**
 Risk Level: SAFE / WARNING / DANGEROUS
+Engine: PostgreSQL / MySQL / unknown, Tenancy: <library or none>
 
 [List of issues found, if any]
 [Suggested fixes, if any]

@@ -87,7 +87,122 @@ MESSAGES = {
         "- Split the backfill into its own migration\n"
         "- Make data migrations idempotent and reversible",
     ),
+    "fk_validation": (
+        WARNING,
+        "Adding a foreign key to an existing table checks every row and blocks writes while it does.\n\n"
+        "- PostgreSQL: add it NOT VALID, then VALIDATE CONSTRAINT in a separate migration "
+        "(Rails: validate: false, then validate_foreign_key)\n"
+        "- MySQL: check for orphaned rows first; for large tables use pt-online-schema-change",
+    ),
+    "check_validation": (
+        WARNING,
+        "Adding a CHECK constraint scans every row under a write-blocking lock.\n\n"
+        "- PostgreSQL: add it NOT VALID, then VALIDATE CONSTRAINT in a separate migration\n"
+        "- MySQL: fix violating rows first; for large tables use gh-ost or pt-online-schema-change",
+    ),
+    "set_not_null": (
+        WARNING,
+        "Making an existing column NOT NULL scans the table under a write-blocking lock.\n\n"
+        "- PostgreSQL 12+: add CHECK (col IS NOT NULL) NOT VALID, validate it, then SET NOT NULL\n"
+        "- MySQL: backfill NULLs first; use an online schema change tool for large tables",
+    ),
+    "concurrently_on_mysql": (
+        WARNING,
+        "CONCURRENTLY is PostgreSQL-only and fails on MySQL.\n\n"
+        "InnoDB already builds secondary indexes online. Use ALGORITHM=INPLACE, LOCK=NONE "
+        "(Rails: algorithm: :inplace, Django: plain AddIndex).",
+    ),
+    "mysql_blocking_algorithm": (
+        WARNING,
+        "ALGORITHM=COPY or LOCK=SHARED/EXCLUSIVE blocks writes for the whole operation.\n\n"
+        "- Prefer ALGORITHM=INSTANT or INPLACE with LOCK=NONE where MySQL supports it\n"
+        "- Otherwise use gh-ost or pt-online-schema-change",
+    ),
+    "unique_without_tenant": (
+        WARNING,
+        "This project scopes rows by tenant, but this unique index does not include the tenant "
+        "column, so two tenants cannot store the same value.\n\n"
+        "- Put the tenant column first, e.g. add_index :users, [:account_id, :email], unique: true",
+    ),
 }
+
+ENGINE_MESSAGES = {
+    "postgresql": {
+        "non_concurrent_index": (
+            "Adding an index without CONCURRENTLY blocks writes to the table until the build finishes.\n\n"
+            "- Rails: add_index :table, :col, algorithm: :concurrently (with disable_ddl_transaction!)\n"
+            "- Django: AddIndexConcurrently (in a migration with atomic = False)\n"
+            "- SQL: CREATE INDEX CONCURRENTLY (outside a transaction)"
+        ),
+        "change_type": (
+            "Most column type changes rewrite the whole table under an ACCESS EXCLUSIVE lock "
+            "(widening a varchar or varchar to text are exceptions).\n\n"
+            "- Test with production-like data first\n"
+            "- For large tables, use add/backfill/swap/drop instead"
+        ),
+        "fk_validation": (
+            "Adding a foreign key takes a SHARE ROW EXCLUSIVE lock on both tables and checks every "
+            "existing row, blocking writes until it finishes.\n\n"
+            "Safe pattern:\n"
+            "1. Add it without validation: SQL NOT VALID, Rails add_foreign_key ..., validate: false\n"
+            "2. Validate in a separate migration: VALIDATE CONSTRAINT, Rails validate_foreign_key"
+        ),
+        "check_validation": (
+            "Adding a CHECK constraint holds an ACCESS EXCLUSIVE lock while it scans every row.\n\n"
+            "Safe pattern:\n"
+            "1. Add it NOT VALID (Rails: add_check_constraint ..., validate: false)\n"
+            "2. VALIDATE CONSTRAINT in a separate migration (Rails: validate_check_constraint)"
+        ),
+        "set_not_null": (
+            "SET NOT NULL scans the whole table under an ACCESS EXCLUSIVE lock.\n\n"
+            "Safe pattern (PostgreSQL 12+):\n"
+            "1. ADD CONSTRAINT c CHECK (col IS NOT NULL) NOT VALID\n"
+            "2. VALIDATE CONSTRAINT c in a separate migration\n"
+            "3. SET NOT NULL, which now skips the scan\n"
+            "4. DROP CONSTRAINT c"
+        ),
+    },
+    "mysql": {
+        "non_concurrent_index": (
+            "InnoDB builds secondary indexes online, but on large tables the build can lag replicas "
+            "and has to wait for a metadata lock.\n\n"
+            "- State the algorithm so MySQL fails instead of locking: ALGORITHM=INPLACE, LOCK=NONE "
+            "(Rails: algorithm: :inplace)\n"
+            "- For very large tables use gh-ost or pt-online-schema-change"
+        ),
+        "change_type": (
+            "Changing a column type usually copies the table (ALGORITHM=COPY) and blocks writes "
+            "for the whole copy.\n\n"
+            "- Check existing data fits the new type\n"
+            "- For large tables use gh-ost or pt-online-schema-change"
+        ),
+        "not_null_no_default": (
+            "Adding a NOT NULL column without a default does not fail on MySQL: existing rows "
+            "silently get the type's implicit default ('' for strings, 0 for numbers).\n\n"
+            "- Give it an explicit DEFAULT, or\n"
+            "- Add it nullable, backfill, then make it NOT NULL"
+        ),
+        "fk_validation": (
+            "Adding a foreign key copies the whole table and blocks writes, unless "
+            "foreign_key_checks is off (then InnoDB adds it in place without checking existing rows).\n\n"
+            "- Check for orphaned rows first\n"
+            "- For large tables use pt-online-schema-change (gh-ost does not support foreign keys)"
+        ),
+        "check_validation": (
+            "MySQL has no NOT VALID, so adding a CHECK constraint checks every row and may rebuild "
+            "the table while blocking writes.\n\n"
+            "- Fix violating rows first\n"
+            "- For large tables use gh-ost or pt-online-schema-change"
+        ),
+        "set_not_null": (
+            "Changing a column to NOT NULL rebuilds the table, and fails in strict mode if any NULLs remain.\n\n"
+            "- Backfill NULLs first, in batches\n"
+            "- For large tables use gh-ost or pt-online-schema-change"
+        ),
+    },
+}
+
+ENGINE_LABEL = {"postgresql": "PostgreSQL", "mysql": "MySQL"}
 
 RULE_ORDER = list(MESSAGES)
 
@@ -97,9 +212,18 @@ SQL = {
     "rename_column": r"(?i:\bRENAME\s+(?:COLUMN|TO|TABLE)\b)",
     "change_type": r"(?i:\bALTER\s+COLUMN\s+\S+\s+(?:SET\s+DATA\s+)?TYPE\b)",
     "remove_index": r"(?i:\bDROP\s+INDEX\b)",
-    "non_concurrent_index": r"(?i:\bCREATE\s+(?:UNIQUE\s+)?INDEX\b(?!\s+CONCURRENTLY\b))",
+    "non_concurrent_index": r"(?i:\bCREATE\s+(?:UNIQUE\s+)?INDEX\b(?!\s+CONCURRENTLY\b)"
+                            r"|\bADD\s+(?:UNIQUE\s+)?(?:INDEX|KEY)\b)",
     "unique_constraint": r"(?i:\bADD\s+(?:CONSTRAINT\s+\S+\s+)?UNIQUE\b|\bCREATE\s+UNIQUE\s+INDEX\b)",
+    "set_not_null": r"(?i:\bALTER\s+COLUMN\s+\S+\s+SET\s+NOT\s+NULL\b)",
+    "mysql_blocking_algorithm": r"(?i:\bALGORITHM\s*=\s*COPY\b|\bLOCK\s*=\s*(?:SHARED|EXCLUSIVE)\b)"
+                                r"|\balgorithm:\s*:copy\b",
 }
+
+TENANT_COLUMN = re.compile(r"\b(?:tenant|account|organi[sz]ation|org|company|workspace|team)_id\b")
+NOT_VALID = re.compile(r"(?i)\bNOT\s+VALID\b")
+MYSQL_ONLINE = re.compile(r"(?i)\bALGORITHM\s*=\s*(?:INPLACE|INSTANT)\b|\balgorithm:\s*:(?:inplace|instant)\b")
+CONCURRENTLY = re.compile(r"(?i)\bCONCURRENTLY\b|\balgorithm:\s*:concurrently\b|\bAddIndexConcurrently\b")
 
 SYNTAX = {
     "rails": {
@@ -167,6 +291,189 @@ def framework_for(path):
     if "migrations/" in p and p.endswith((".js", ".ts")):
         return "knex"
     return None
+
+
+PROJECT_FILES = [
+    "Gemfile.lock", "config/database.yml", ".env", "config/database.php", "composer.json",
+    "package.json", "requirements.txt", "requirements/base.txt", "requirements/production.txt",
+    "pyproject.toml", "Pipfile", "poetry.lock", "migration_lock.toml", "schema.prisma",
+]
+PYTHON_DEP_FILES = ["requirements.txt", "requirements/base.txt", "requirements/production.txt",
+                    "pyproject.toml", "Pipfile", "poetry.lock"]
+MAX_LEVELS = 10
+MAX_READ = 1 << 20
+
+ADAPTERS = {
+    "postgresql": "postgresql", "postgis": "postgresql", "postgres": "postgresql", "pgsql": "postgresql",
+    "mysql": "mysql", "mysql2": "mysql", "trilogy": "mysql", "mariadb": "mysql",
+}
+
+
+def read_text(path):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read(MAX_READ)
+    except OSError:
+        return None
+
+
+def project_files(file_path, cwd):
+    """Nearest copy of each known project file, walking up from the migration's directory."""
+    p = file_path.replace("\\", "/")
+    if not os.path.isabs(p) and cwd:
+        p = os.path.join(cwd, p)
+    d = os.path.dirname(os.path.abspath(p))
+    found = {}
+    for _ in range(MAX_LEVELS):
+        for rel in PROJECT_FILES:
+            if rel not in found:
+                text = read_text(os.path.join(d, rel))
+                if text is not None:
+                    found[rel] = text
+        parent = os.path.dirname(d)
+        if os.path.isdir(os.path.join(d, ".git")) or parent == d:
+            break
+        d = parent
+    return found
+
+
+def json_deps(text, *keys):
+    try:
+        data = json.loads(text or "")
+    except ValueError:
+        return set()
+    if not isinstance(data, dict):
+        return set()
+    deps = set()
+    for key in keys:
+        section = data.get(key)
+        if isinstance(section, dict):
+            deps.update(section)
+    return deps
+
+
+def only_engine(candidates):
+    candidates.discard(None)
+    return candidates.pop() if len(candidates) == 1 else None
+
+
+def detect_engine(files):
+    explicit = set()
+    for m in re.finditer(r"(?m)^\s*adapter:\s*['\"]?(\w+)", files.get("config/database.yml", "")):
+        explicit.add(ADAPTERS.get(m.group(1)))
+    env = re.search(r"(?m)^\s*DB_CONNECTION\s*=\s*['\"]?(\w+)", files.get(".env", ""))
+    if not env:
+        env = re.search(r"env\(\s*['\"]DB_CONNECTION['\"]\s*,\s*['\"](\w+)", files.get("config/database.php", ""))
+    if env:
+        explicit.add(ADAPTERS.get(env.group(1)))
+    prisma = (re.search(r'provider\s*=\s*"(\w+)"', files.get("migration_lock.toml", ""))
+              or re.search(r'datasource\s+\w+\s*\{[^}]*?provider\s*=\s*"(\w+)"', files.get("schema.prisma", "")))
+    if prisma:
+        explicit.add(ADAPTERS.get(prisma.group(1)))
+    engine = only_engine(explicit)
+    if engine or len(explicit) > 1:
+        return engine
+
+    deps = set()
+    for m in re.finditer(r"(?m)^ {4}(pg|mysql2|trilogy) \(", files.get("Gemfile.lock", "")):
+        deps.add("postgresql" if m.group(1) == "pg" else "mysql")
+    python = "\n".join(files.get(f, "") for f in PYTHON_DEP_FILES)
+    for m in re.finditer(r"(?im)^\s*[\"']?(psycopg2?(?:-binary)?|mysqlclient|pymysql|mysql-connector-python)\b",
+                         python):
+        deps.add("postgresql" if m.group(1).lower().startswith("psycopg") else "mysql")
+    for name in json_deps(files.get("package.json"), "dependencies", "devDependencies"):
+        if name == "pg":
+            deps.add("postgresql")
+        elif name in ("mysql", "mysql2"):
+            deps.add("mysql")
+    return only_engine(deps)
+
+
+TENANCY_LIBS = [
+    ("gem", "ros-apartment", "schema", "bundle exec rake apartment:migrate"),
+    ("gem", "apartment", "schema", "bundle exec rake apartment:migrate"),
+    ("python", "django-tenants", "schema", "python manage.py migrate_schemas"),
+    ("python", "django-tenant-schemas", "schema", "python manage.py migrate_schemas"),
+    ("composer", "stancl/tenancy", "schema", "php artisan tenants:migrate"),
+    ("composer", "spatie/laravel-multitenancy", "schema", None),
+    ("gem", "acts_as_tenant", "row", None),
+]
+
+
+def detect_tenancy(files, file_path):
+    python = "\n".join(files.get(f, "") for f in PYTHON_DEP_FILES)
+    composer = json_deps(files.get("composer.json"), "require", "require-dev")
+    for source, lib, kind, command in TENANCY_LIBS:
+        if source == "gem":
+            hit = re.search(rf"(?m)^ {{4}}{re.escape(lib)} \(", files.get("Gemfile.lock", ""))
+        elif source == "python":
+            hit = re.search(rf"(?im)^\s*[\"']?{re.escape(lib)}\b", python)
+        else:
+            hit = lib in composer
+        if hit:
+            return {"kind": kind, "lib": lib, "command": command}
+    if "/migrations/tenant/" in file_path.replace("\\", "/"):
+        return {"kind": "schema", "lib": "tenant migrations folder", "command": None}
+    return None
+
+
+def mask_url(url):
+    return re.sub(r"(//[^:/@]+):[^@]*@", r"\1:***@", url)
+
+
+def sentinel_url(files):
+    url = os.environ.get("SENTINEL_DATABASE")
+    if not url:
+        m = re.search(r"(?m)^\s*SENTINEL_DATABASE\s*=\s*['\"]?([^'\"\s]+)", files.get(".env", ""))
+        url = m.group(1) if m else ""
+    return url.strip()
+
+
+REHEARSE_COMMANDS = {
+    "rails": 'DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate',
+    "django": 'DATABASE_URL="$SENTINEL_DATABASE" python manage.py migrate  (if settings read DATABASE_URL)',
+    "laravel": 'DB_URL="$SENTINEL_DATABASE" php artisan migrate  (DATABASE_URL before Laravel 11)',
+    "prisma": 'DATABASE_URL="$SENTINEL_DATABASE" npx prisma migrate deploy',
+    "knex": 'DATABASE_URL="$SENTINEL_DATABASE" npx knex migrate:latest  (if knexfile reads DATABASE_URL)',
+}
+
+
+def rehearsal_note(fw, files):
+    url = sentinel_url(files)
+    if not url:
+        return ("Rehearse first: run this on a shadow copy of production (a restored recent backup), "
+                "time it, and watch for locks. Set SENTINEL_DATABASE to that copy's URL and this "
+                "check will give the exact command.")
+    if url == (os.environ.get("DATABASE_URL") or "").strip():
+        return ("SENTINEL_DATABASE is the same as DATABASE_URL. Do not rehearse against it: "
+                "point SENTINEL_DATABASE at a separate copy of production.")
+    return (f"Rehearse on the sentinel database ({mask_url(url)}) before deploying, and time it:\n"
+            f"  {REHEARSE_COMMANDS[fw]}")
+
+
+def context_notes(names, fw, engine, tenancy, files, content):
+    notes = []
+    if any(MESSAGES[n][0] == DANGEROUS for n in names):
+        notes.append(rehearsal_note(fw, files))
+    if engine == "postgresql" and not re.search(r"(?i)lock_timeout", content):
+        notes.append("PostgreSQL: set a lock_timeout (e.g. SET lock_timeout = '5s') so blocked DDL fails "
+                     "fast instead of stalling every query queued behind it. Rails: strong_migrations "
+                     "can set it for you.")
+    if engine == "mysql":
+        notes.append("MySQL: DDL is not transactional, so if a later statement fails the earlier ones stay "
+                     "applied. Keep one DDL change per migration, and set lock_wait_timeout so a blocked "
+                     "ALTER fails fast.")
+    if tenancy and tenancy["kind"] == "schema":
+        lines = [f"Multi-tenant ({tenancy['lib']}): this migration runs once per tenant schema or database. "
+                 "Lock time and runtime multiply by the tenant count, and a failure partway leaves "
+                 "tenants on different versions.",
+                 "- Make it idempotent and safe to re-run",
+                 "- Batch backfills per tenant",
+                 "- Try it on one tenant first"]
+        if tenancy["command"]:
+            lines.append(f"- Run with: {tenancy['command']}")
+        notes.append("\n".join(lines))
+    return notes
 
 
 def strip_comments(content, fw):
@@ -287,37 +594,88 @@ def php_alter_statements(content):
     return result
 
 
-def detect(fw, content):
+def sql_statements(content):
+    return [s for s in content.split(";") if s.strip()]
+
+
+def detect_sql_constraints(content, found, unique_stmts, fw):
+    # outside pure SQL files, only uppercase keywords count, so Ruby's t.references is ignored
+    fk = re.compile(r"\bFOREIGN\s+KEY\b|\bREFERENCES\b", re.I if fw == "prisma" else 0)
+    for stmt in sql_statements(content):
+        if not re.search(r"(?i)\bALTER\s+TABLE\b", stmt):
+            if re.search(r"(?i)\bCREATE\s+UNIQUE\s+INDEX\b", stmt):
+                unique_stmts.append(stmt)
+            continue
+        if fk.search(stmt) and not NOT_VALID.search(stmt):
+            found.add("fk_validation")
+        if re.search(r"(?i)\bADD\s+(?:CONSTRAINT\s+\S+\s+)?CHECK\b", stmt) and not NOT_VALID.search(stmt):
+            found.add("check_validation")
+        if re.search(r"(?i)\bADD\s+(?:CONSTRAINT\s+\S+\s+)?UNIQUE\b", stmt):
+            unique_stmts.append(stmt)
+
+
+def rails_index_is_flagged(stmt, engine):
+    if engine == "mysql":
+        return not MYSQL_ONLINE.search(stmt) and not CONCURRENTLY.search(stmt)
+    return not CONCURRENTLY.search(stmt)
+
+
+def detect(fw, content, engine=None, tenancy=None):
     found = set()
+    unique_stmts = []
     syntax = SYNTAX[fw]
     for name in RULE_ORDER:
         for rx in (syntax.get(name), SQL.get(name)):
             if rx and re.search(rx, content):
                 found.add(name)
+    detect_sql_constraints(content, found, unique_stmts, fw)
 
     if fw == "rails":
         for stmt in ruby_statements(content):
+            not_validated = not re.search(r"\bvalidate:\s*false\b", stmt)
             if re.search(r"\badd_index\b", stmt):
-                if not re.search(r"concurrently", stmt):
+                if rails_index_is_flagged(stmt, engine):
                     found.add("non_concurrent_index")
                 if re.search(r"\bunique:\s*true\b", stmt):
                     found.add("unique_constraint")
+                    unique_stmts.append(stmt)
             if (re.search(r"\badd_column\b", stmt) and re.search(r"\bnull:\s*false\b", stmt)
                     and not re.search(r"\bdefault:", stmt)):
                 found.add("not_null_no_default")
+            if re.search(r"\badd_foreign_key\b", stmt) and not_validated:
+                found.add("fk_validation")
+            if (re.search(r"\badd_(?:reference|belongs_to)\b", stmt)
+                    and re.search(r"\bforeign_key:\s*(?:true|\{)", stmt) and not_validated):
+                found.add("fk_validation")
+            if re.search(r"\badd_check_constraint\b", stmt) and not_validated:
+                found.add("check_validation")
+            if re.search(r"\bchange_column_null\b[^\n]*,\s*false\b", stmt):
+                found.add("set_not_null")
     elif fw == "django":
         for call in balanced_calls(content, "AddField"):
             if re.search(r"\bnull\s*=\s*False\b", call) and not re.search(r"\bdefault\s*=", call):
                 found.add("not_null_no_default")
+            if (re.search(r"\b(?:ForeignKey|OneToOneField)\s*\(", call)
+                    and not re.search(r"\bdb_constraint\s*=\s*False\b", call)):
+                found.add("fk_validation")
         for call in balanced_calls(content, "AddField") + balanced_calls(content, "AlterField"):
             if re.search(r"\bunique\s*=\s*True\b", call):
                 found.add("unique_constraint")
+                unique_stmts.append(call)
+        for call in balanced_calls(content, "AddConstraint"):
+            if re.search(r"\bCheckConstraint\b", call):
+                found.add("check_validation")
+            if re.search(r"\bUniqueConstraint\b", call):
+                unique_stmts.append(call)
     elif fw == "laravel":
         for stmt in php_alter_statements(content):
             if re.search(r"->\s*nullable\s*\(\s*false\s*\)", stmt) and not re.search(r"->\s*default\s*\(", stmt):
                 found.add("not_null_no_default")
             if re.search(r"->\s*unique\s*\(", stmt):
                 found.add("unique_constraint")
+                unique_stmts.append(stmt)
+            if re.search(r"->\s*(?:foreign|constrained)\s*\(", stmt):
+                found.add("fk_validation")
 
     if sql_adds_not_null_column(content, fw):
         found.add("not_null_no_default")
@@ -325,11 +683,23 @@ def detect(fw, content):
     if fw in DATA_OPS and re.search(DATA_OPS[fw], content) and re.search(SCHEMA_OPS[fw], content):
         found.add("data_in_schema_migration")
 
+    if engine == "mysql":
+        if CONCURRENTLY.search(content):
+            found.add("concurrently_on_mysql")
+            found.discard("non_concurrent_index")
+        elif fw != "rails" and MYSQL_ONLINE.search(content):
+            found.discard("non_concurrent_index")
+    elif engine == "postgresql":
+        found.discard("mysql_blocking_algorithm")
+
+    if tenancy and tenancy["kind"] == "row" and any(not TENANT_COLUMN.search(s) for s in unique_stmts):
+        found.add("unique_without_tenant")
+
     return [name for name in RULE_ORDER if name in found]
 
 
-def check_content(content, fw):
-    return detect(fw, strip_down(strip_comments(content, fw), fw))
+def check_content(content, fw, engine=None, tenancy=None):
+    return detect(fw, strip_down(strip_comments(content, fw), fw), engine, tenancy)
 
 
 def state_dir():
@@ -380,11 +750,24 @@ def extract_content(tool_name, tool_input):
     return ""
 
 
-def format_findings(file_path, names):
-    lines = [f"Migration Safety Check: {file_path}", ""]
+def message_for(name, engine):
+    level, generic = MESSAGES[name]
+    return level, ENGINE_MESSAGES.get(engine, {}).get(name, generic)
+
+
+def format_findings(file_path, names, engine=None, tenancy=None, notes=()):
+    tags = [ENGINE_LABEL[engine]] if engine else []
+    if tenancy:
+        tags.append(f"multi-tenant: {tenancy['lib']}")
+    header = f"Migration Safety Check: {file_path}" + (f" ({', '.join(tags)})" if tags else "")
+    lines = [header, ""]
     for name in names:
-        level, message = MESSAGES[name]
+        level, message = message_for(name, engine)
         lines += [f"[{level}] {name}", message, ""]
+    if notes:
+        lines.append("Context:")
+        for note in notes:
+            lines += [note, ""]
     return "\n".join(lines).rstrip()
 
 
@@ -411,15 +794,21 @@ def main():
     if not content:
         return 0
 
+    cwd = data.get("cwd") if isinstance(data.get("cwd"), str) else ""
+    files = project_files(file_path, cwd)
+    engine = detect_engine(files)
+    tenancy = detect_tenancy(files, file_path)
+
     session_id = data.get("session_id") or "default"
     shown = load_shown(session_id)
-    names = [n for n in check_content(content, fw) if f"{file_path}:{n}" not in shown]
+    names = [n for n in check_content(content, fw, engine, tenancy) if f"{file_path}:{n}" not in shown]
     if not names:
         return 0
     shown.update(f"{file_path}:{n}" for n in names)
     save_shown(session_id, shown)
 
-    text = format_findings(file_path, names)
+    notes = context_notes(names, fw, engine, tenancy, files, strip_comments(content, fw))
+    text = format_findings(file_path, names, engine, tenancy, notes)
     if any(MESSAGES[n][0] == DANGEROUS for n in names):
         print(text, file=sys.stderr)
         return 2
