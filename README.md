@@ -12,7 +12,7 @@ A plugin that catches dangerous database migration patterns before they reach pr
 - Flags unvalidated foreign keys, CHECK constraints and SET NOT NULL scans
 - Detects PostgreSQL vs MySQL and gives engine-specific fixes (CONCURRENTLY and NOT VALID vs ALGORITHM=INPLACE and online schema change tools)
 - Detects multi-tenant setups (Apartment, django-tenants, stancl/tenancy, spatie, acts_as_tenant)
-- Suggests rehearsing DANGEROUS changes on a sentinel database (`SENTINEL_DATABASE`)
+- Suggests rehearsing DANGEROUS changes on a sentinel database (a restored copy of production)
 - Works across Rails, Django, Laravel, Prisma, and Knex
 
 ## Installation
@@ -45,7 +45,7 @@ The `migrate-check` skill carries the detailed advice, on Claude.ai as well as i
 | `database/migrations/tenant/` folder | per tenant | fan-out |
 | `acts_as_tenant` | shared schema | unique indexes must include the tenant column |
 
-- **Sentinel database**: for DANGEROUS changes, a command to rehearse on a restored copy of production, e.g. `DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate`. Export `SENTINEL_DATABASE` in your shell. Nothing in the plugin reads `.env`, database URLs or other credentials, or runs migrations.
+- **Sentinel database**: for DANGEROUS changes, a command to rehearse on a restored copy of production set up as a named `sentinel` connection, e.g. `RAILS_ENV=sentinel bin/rails db:migrate` or `php artisan migrate --database=sentinel`. Nothing in the plugin reads `.env`, database config, URLs or other credentials, or runs migrations.
 
 ### Optional: stricter local checker
 

@@ -410,18 +410,17 @@ def detect_tenancy(files, file_path):
 
 
 REHEARSE_COMMANDS = {
-    "rails": 'DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate',
-    "django": 'DATABASE_URL="$SENTINEL_DATABASE" python manage.py migrate  (if settings read DATABASE_URL)',
-    "laravel": 'DB_URL="$SENTINEL_DATABASE" php artisan migrate  (DATABASE_URL before Laravel 11)',
-    "prisma": 'DATABASE_URL="$SENTINEL_DATABASE" npx prisma migrate deploy',
-    "knex": 'DATABASE_URL="$SENTINEL_DATABASE" npx knex migrate:latest  (if knexfile reads DATABASE_URL)',
+    "rails": "RAILS_ENV=sentinel bin/rails db:migrate  (with a sentinel entry in database.yml)",
+    "django": "python manage.py migrate --database=sentinel  (with a sentinel alias in DATABASES)",
+    "laravel": "php artisan migrate --database=sentinel  (with a sentinel connection in config/database.php)",
+    "prisma": "npx prisma migrate deploy  (from a shell configured for the sentinel copy)",
+    "knex": "npx knex migrate:latest --env sentinel  (with a sentinel environment in the knexfile)",
 }
 
 
 def rehearsal_note(fw):
-    # never reads SENTINEL_DATABASE or any database URL: the user's shell expands it
     return ("Rehearse first on a sentinel database: a restored copy of production, never production "
-            "itself. Export its URL as SENTINEL_DATABASE, then run and time:\n"
+            "itself, set up as its own named connection. Then run and time:\n"
             f"  {REHEARSE_COMMANDS[fw]}")
 
 

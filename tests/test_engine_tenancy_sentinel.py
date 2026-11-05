@@ -287,15 +287,15 @@ def test_unique_without_tenant_needs_row_tenancy(tmp_path):
     assert "[WARNING] unique_without_tenant" not in ctx
 
 
-# SENTINEL_DATABASE rehearsal: credentials are never read
+# Sentinel rehearsal: credentials are never read
 
 @pytest.mark.parametrize("rel,content,command", [
-    (RAILS_REL, "remove_column :t, :c", 'DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate'),
-    (DJANGO_REL, "migrations.RemoveField(model_name='t', name='c')", "python manage.py migrate"),
+    (RAILS_REL, "remove_column :t, :c", "RAILS_ENV=sentinel bin/rails db:migrate"),
+    (DJANGO_REL, "migrations.RemoveField(model_name='t', name='c')", "manage.py migrate --database=sentinel"),
     (LARAVEL_REL, "Schema::table('t', function ($t) {\n  $t->dropColumn('c');\n});",
-     'DB_URL="$SENTINEL_DATABASE" php artisan migrate'),
+     "php artisan migrate --database=sentinel"),
     (PRISMA_REL, 'ALTER TABLE "t" DROP COLUMN "c";', "npx prisma migrate deploy"),
-    (KNEX_REL, "table.dropColumn('c')", "npx knex migrate:latest"),
+    (KNEX_REL, "table.dropColumn('c')", "npx knex migrate:latest --env sentinel"),
 ])
 def test_dangerous_gives_rehearsal_command(tmp_path, rel, content, command):
     result = hook(tmp_path, {}, rel, content)
@@ -318,7 +318,7 @@ def test_database_urls_are_never_read_or_printed(tmp_path):
 
 def test_no_rehearsal_note_for_warnings_only(tmp_path):
     ctx = warning_context(hook(tmp_path, {}, RAILS_REL, "add_index :t, :c"))
-    assert "SENTINEL" not in ctx
+    assert "sentinel" not in ctx.lower().replace(str(tmp_path).lower(), "")
     assert "Rehearse" not in ctx
 
 

@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -38,3 +39,11 @@ def test_manifest_version_matches_skill():
     version = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text())["version"]
     skill = (ROOT / "skills" / "migrate-check" / "SKILL.md").read_text()
     assert f"version: {version}" in skill
+
+
+def test_no_credential_env_vars_anywhere():
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    shipped = [ROOT / f for f in tracked.split() if not f.startswith("tests/")]
+    pattern = re.compile(r"DATABASE_URL|DB_URL|SENTINEL_DATABASE|DB_PASSWORD|API_KEY|_TOKEN\b")
+    offenders = [str(p.relative_to(ROOT)) for p in shipped if pattern.search(p.read_text(errors="ignore"))]
+    assert offenders == []
