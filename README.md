@@ -45,26 +45,7 @@ The `migrate-check` skill carries the detailed advice, on Claude.ai as well as i
 | `database/migrations/tenant/` folder | per tenant | fan-out |
 | `acts_as_tenant` | shared schema | unique indexes must include the tenant column |
 
-- **Sentinel database**: for DANGEROUS changes, a command to rehearse on a restored copy of production set up as a named `sentinel` connection, e.g. `RAILS_ENV=sentinel bin/rails db:migrate` or `php artisan migrate --database=sentinel`. Nothing in the plugin reads environment files, database config, URLs or other credentials, or runs migrations.
-
-### Optional: stricter local checker
-
-`scripts/migration_safety_hook.py` is a tested, deterministic version of all the checks above (engine-specific fixes, tenancy, unvalidated foreign keys and CHECKs, MySQL `ALGORITHM=COPY`, and more). The plugin does not register it. To use it, copy it into your project and add it to `.claude/settings.json`:
-
-```json
-{
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Edit|Write|MultiEdit",
-        "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/migration_safety_hook.py\"" }]
-      }
-    ]
-  }
-}
-```
-
-It blocks DANGEROUS changes once per file and pattern, passes WARNINGs to Claude without blocking, keeps state in the system temp folder; to turn it off, remove it from your settings.
+- **Sentinel database**: for DANGEROUS changes, advice to rehearse on a restored copy of production set up as a named `sentinel` connection, using the framework's own connection feature. The plugin runs nothing.
 
 ### Slash Command
 

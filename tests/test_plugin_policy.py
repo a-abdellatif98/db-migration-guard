@@ -47,3 +47,28 @@ def test_no_credential_env_vars_anywhere():
     pattern = re.compile(r"DATABASE_URL|DB_URL|SENTINEL_DATABASE|DB_PASSWORD|API_KEY|_TOKEN\b")
     offenders = [str(p.relative_to(ROOT)) for p in shipped if pattern.search(p.read_text(errors="ignore"))]
     assert offenders == []
+
+
+def shipped_files():
+    tracked = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True).stdout
+    return [ROOT / f for f in tracked.splitlines() if not f.startswith("tests/") and f != "assets/icon.svg"]
+
+
+def test_no_executable_code_shipped():
+    assert [p.name for p in shipped_files() if p.suffix in {".py", ".sh", ".js", ".rb", ".ts"}] == []
+
+
+def test_no_credential_or_env_references():
+    pattern = re.compile(
+        r"environ|getenv|process\.env|\.env\b|database\.yml|database\.php|knexfile|DATABASES"
+        r"|RAILS_ENV|credential|password|secret|SENTINEL_DATABASE|DATABASE_URL|database url|\$\{user_config",
+        re.I,
+    )
+    offenders = [p.name for p in shipped_files() if pattern.search(p.read_text(errors="ignore"))]
+    assert offenders == []
+
+
+def test_no_network_or_file_read_code_references():
+    pattern = re.compile(r"https?://(?!github\.com/a-abdellatif98)|curl |wget |urllib|requests\.|socket|fetch\(|open\(")
+    offenders = [p.name for p in shipped_files() if pattern.search(p.read_text(errors="ignore"))]
+    assert offenders == []
