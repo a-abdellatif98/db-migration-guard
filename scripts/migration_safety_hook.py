@@ -296,9 +296,10 @@ def framework_for(path):
 
 
 PROJECT_FILES = [
-    "Gemfile.lock", "config/database.yml", "config/database.php", "composer.json",
+    # lock and dependency files only: database config files can hold passwords
+    "Gemfile.lock", "composer.json",
     "package.json", "requirements.txt", "requirements/base.txt", "requirements/production.txt",
-    "pyproject.toml", "Pipfile", "poetry.lock", "migration_lock.toml", "schema.prisma",
+    "pyproject.toml", "Pipfile", "poetry.lock", "migration_lock.toml",
 ]
 PYTHON_DEP_FILES = ["requirements.txt", "requirements/base.txt", "requirements/production.txt",
                     "pyproject.toml", "Pipfile", "poetry.lock"]
@@ -361,19 +362,9 @@ def only_engine(candidates):
 
 
 def detect_engine(files):
-    explicit = set()
-    for m in re.finditer(r"(?m)^\s*adapter:\s*['\"]?(\w+)", files.get("config/database.yml", "")):
-        explicit.add(ADAPTERS.get(m.group(1)))
-    env = re.search(r"env\(\s*['\"]DB_CONNECTION['\"]\s*,\s*['\"](\w+)", files.get("config/database.php", ""))
-    if env:
-        explicit.add(ADAPTERS.get(env.group(1)))
-    prisma = (re.search(r'provider\s*=\s*"(\w+)"', files.get("migration_lock.toml", ""))
-              or re.search(r'datasource\s+\w+\s*\{[^}]*?provider\s*=\s*"(\w+)"', files.get("schema.prisma", "")))
-    if prisma:
-        explicit.add(ADAPTERS.get(prisma.group(1)))
-    engine = only_engine(explicit)
-    if engine or len(explicit) > 1:
-        return engine
+    prisma = re.search(r'provider\s*=\s*"(\w+)"', files.get("migration_lock.toml", ""))
+    if prisma and ADAPTERS.get(prisma.group(1)):
+        return ADAPTERS[prisma.group(1)]
 
     deps = set()
     for m in re.finditer(r"(?m)^ {4}(pg|mysql2|trilogy) \(", files.get("Gemfile.lock", "")):

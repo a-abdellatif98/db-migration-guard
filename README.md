@@ -33,7 +33,7 @@ To go ahead with a change you have reviewed, ask Claude to add the comment `migr
 
 The `migrate-check` skill carries the detailed advice, on Claude.ai as well as in Claude Code:
 
-- **PostgreSQL vs MySQL**: detected from `config/database.yml`, `config/database.php`, Prisma's provider, or driver dependencies. PostgreSQL gets `CONCURRENTLY` and `NOT VALID` patterns; MySQL gets `ALGORITHM=INPLACE, LOCK=NONE`, gh-ost and pt-online-schema-change.
+- **PostgreSQL vs MySQL**: detected from Prisma's `migration_lock.toml` or driver dependencies (`Gemfile.lock`, `requirements*.txt`, `pyproject.toml`, `package.json`), never from database config files. PostgreSQL gets `CONCURRENTLY` and `NOT VALID` patterns; MySQL gets `ALGORITHM=INPLACE, LOCK=NONE`, gh-ost and pt-online-schema-change.
 - **Multi-tenant projects**:
 
 | Library | Model | Extra advice |
