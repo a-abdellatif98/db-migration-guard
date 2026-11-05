@@ -10,7 +10,7 @@ LARAVEL_REL = "database/migrations/2026_01_01_000000_x.php"
 PRISMA_REL = "prisma/migrations/20260101000000_x/migration.sql"
 KNEX_REL = "migrations/20260101000000_x.js"
 
-PG_YML = "production:\n  adapter: postgresql\n"
+PG_LOCK = "    pg (1.5.4)\n"
 MYSQL_LOCK = "    mysql2 (0.5.6)\n"
 PRISMA_MYSQL = {"prisma/migrations/migration_lock.toml": 'provider = "mysql"\n'}
 PRISMA_PG = {"prisma/migrations/migration_lock.toml": 'provider = "postgresql"\n'}
@@ -34,19 +34,13 @@ def hook(tmp_path, files, rel, content, **kw):
 # Engine detection
 
 @pytest.mark.parametrize("files,rel,content,label", [
-    ({"config/database.yml": PG_YML}, RAILS_REL, "add_index :t, :c", "PostgreSQL"),
     ({"Gemfile.lock": MYSQL_LOCK}, RAILS_REL, "add_index :t, :c", "MySQL"),
     ({"Gemfile.lock": "    pg (1.5.4)\n"}, RAILS_REL, "add_index :t, :c", "PostgreSQL"),
     ({"requirements.txt": "Django==5.0\npsycopg2-binary==2.9\n"}, DJANGO_REL,
      "migrations.AddIndex(model_name='t', index=i)", "PostgreSQL"),
     ({"pyproject.toml": 'dependencies = [\n  "mysqlclient>=2",\n]\n'}, DJANGO_REL,
      "migrations.AddIndex(model_name='t', index=i)", "MySQL"),
-    ({"config/database.php": "'default' => env('DB_CONNECTION', 'mysql'),"}, LARAVEL_REL,
-     "Schema::table('t', function ($t) {\n  $t->string('c')->nullable(false);\n});", "MySQL"),
     (PRISMA_MYSQL, PRISMA_REL, 'CREATE INDEX i ON t(c);', "MySQL"),
-    ({"prisma/schema.prisma": 'generator c {\n provider = "prisma-client-js"\n}\n'
-                              'datasource db {\n provider = "postgresql"\n url = env("DATABASE_URL")\n}\n'},
-     PRISMA_REL, 'CREATE INDEX i ON t(c);', "PostgreSQL"),
     ({"package.json": json.dumps({"dependencies": {"knex": "3", "pg": "8"}})}, KNEX_REL,
      "CREATE INDEX i ON t(c)", "PostgreSQL"),
 ])
@@ -55,14 +49,27 @@ def test_engine_is_detected_and_shown(tmp_path, files, rel, content, label):
     assert ctx.splitlines()[0].endswith(f"({label})")
 
 
-def test_explicit_config_beats_dependencies(tmp_path):
-    files = {"config/database.yml": PG_YML, "Gemfile.lock": MYSQL_LOCK}
-    assert "(PostgreSQL)" in warning_context(hook(tmp_path, files, RAILS_REL, "add_index :t, :c"))
+def test_prisma_lock_beats_dependencies(tmp_path):
+    files = {**PRISMA_PG, "package.json": json.dumps({"dependencies": {"mysql2": "3"}})}
+    assert "(PostgreSQL)" in warning_context(hook(tmp_path, files, PRISMA_REL, "CREATE INDEX i ON t(c);"))
+
+
+@pytest.mark.parametrize("files,rel,content", [
+    ({"config/database.yml": "production:\n  adapter: postgresql\n  password: s3cret\n"}, RAILS_REL,
+     "add_index :t, :c"),
+    ({"config/database.php": "'default' => env('DB_CONNECTION', 'pgsql'),"}, LARAVEL_REL,
+     "Schema::table('t', function ($t) {\n  $t->string('c')->nullable(false);\n});"),
+    ({"prisma/schema.prisma": 'datasource db {\n provider = "postgresql"\n url = "postgres://u:s3cret@h/d"\n}\n'},
+     PRISMA_REL, "CREATE INDEX i ON t(c);"),
+])
+def test_database_config_files_are_never_read(tmp_path, files, rel, content):
+    ctx = warning_context(hook(tmp_path, files, rel, content))
+    assert "PostgreSQL" not in ctx.splitlines()[0]
+    assert "s3cret" not in ctx
 
 
 @pytest.mark.parametrize("files", [
     {},
-    {"config/database.yml": "a:\n  adapter: postgresql\nb:\n  adapter: mysql2\n"},
     {"Gemfile.lock": "    pg (1)\n    mysql2 (1)\n"},
 ])
 def test_unknown_or_ambiguous_engine_uses_generic_text(tmp_path, files):
@@ -72,20 +79,19 @@ def test_unknown_or_ambiguous_engine_uses_generic_text(tmp_path, files):
 
 
 def test_relative_path_resolved_against_cwd(tmp_path):
-    root = project(tmp_path, {"config/database.yml": PG_YML})
+    root = project(tmp_path, {"Gemfile.lock": PG_LOCK})
     assert "(PostgreSQL)" in warning_context(run_hook(tmp_path, RAILS_REL, "add_index :t, :c", cwd=root))
 
 
 def test_walk_stops_at_git_root(tmp_path):
-    (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "database.yml").write_text(PG_YML)
+    (tmp_path / "Gemfile.lock").write_text(PG_LOCK)
     ctx = warning_context(hook(tmp_path, {}, RAILS_REL, "add_index :t, :c"))
     assert "PostgreSQL" not in ctx
 
 
 # PostgreSQL-specific rules and text
 
-PG_FILES = {"config/database.yml": PG_YML}
+PG_FILES = {"Gemfile.lock": PG_LOCK}
 
 
 @pytest.mark.parametrize("rel,files,content,name", [
@@ -281,15 +287,15 @@ def test_unique_without_tenant_needs_row_tenancy(tmp_path):
     assert "[WARNING] unique_without_tenant" not in ctx
 
 
-# SENTINEL_DATABASE rehearsal: credentials are never read
+# Sentinel rehearsal: credentials are never read
 
 @pytest.mark.parametrize("rel,content,command", [
-    (RAILS_REL, "remove_column :t, :c", 'DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate'),
-    (DJANGO_REL, "migrations.RemoveField(model_name='t', name='c')", "python manage.py migrate"),
+    (RAILS_REL, "remove_column :t, :c", "RAILS_ENV=sentinel bin/rails db:migrate"),
+    (DJANGO_REL, "migrations.RemoveField(model_name='t', name='c')", "manage.py migrate --database=sentinel"),
     (LARAVEL_REL, "Schema::table('t', function ($t) {\n  $t->dropColumn('c');\n});",
-     'DB_URL="$SENTINEL_DATABASE" php artisan migrate'),
+     "php artisan migrate --database=sentinel"),
     (PRISMA_REL, 'ALTER TABLE "t" DROP COLUMN "c";', "npx prisma migrate deploy"),
-    (KNEX_REL, "table.dropColumn('c')", "npx knex migrate:latest"),
+    (KNEX_REL, "table.dropColumn('c')", "npx knex migrate:latest --env sentinel"),
 ])
 def test_dangerous_gives_rehearsal_command(tmp_path, rel, content, command):
     result = hook(tmp_path, {}, rel, content)
@@ -312,7 +318,7 @@ def test_database_urls_are_never_read_or_printed(tmp_path):
 
 def test_no_rehearsal_note_for_warnings_only(tmp_path):
     ctx = warning_context(hook(tmp_path, {}, RAILS_REL, "add_index :t, :c"))
-    assert "SENTINEL" not in ctx
+    assert "sentinel" not in ctx.lower().replace(str(tmp_path).lower(), "")
     assert "Rehearse" not in ctx
 
 
@@ -341,8 +347,7 @@ def test_mysql_concurrently_does_not_hide_other_plain_rails_index(tmp_path):
 
 
 def test_walk_stops_at_cwd(tmp_path):
-    (tmp_path / "config").mkdir()
-    (tmp_path / "config" / "database.yml").write_text(PG_YML)
+    (tmp_path / "Gemfile.lock").write_text(PG_LOCK)
     root = tmp_path / "proj"
     (root / "db" / "migrate").mkdir(parents=True)
     ctx = warning_context(run_hook(tmp_path, str(root / RAILS_REL), "add_index :t, :c", cwd=root))

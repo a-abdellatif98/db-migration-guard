@@ -296,9 +296,10 @@ def framework_for(path):
 
 
 PROJECT_FILES = [
-    "Gemfile.lock", "config/database.yml", "config/database.php", "composer.json",
+    # lock and dependency files only: database config files can hold passwords
+    "Gemfile.lock", "composer.json",
     "package.json", "requirements.txt", "requirements/base.txt", "requirements/production.txt",
-    "pyproject.toml", "Pipfile", "poetry.lock", "migration_lock.toml", "schema.prisma",
+    "pyproject.toml", "Pipfile", "poetry.lock", "migration_lock.toml",
 ]
 PYTHON_DEP_FILES = ["requirements.txt", "requirements/base.txt", "requirements/production.txt",
                     "pyproject.toml", "Pipfile", "poetry.lock"]
@@ -361,19 +362,9 @@ def only_engine(candidates):
 
 
 def detect_engine(files):
-    explicit = set()
-    for m in re.finditer(r"(?m)^\s*adapter:\s*['\"]?(\w+)", files.get("config/database.yml", "")):
-        explicit.add(ADAPTERS.get(m.group(1)))
-    env = re.search(r"env\(\s*['\"]DB_CONNECTION['\"]\s*,\s*['\"](\w+)", files.get("config/database.php", ""))
-    if env:
-        explicit.add(ADAPTERS.get(env.group(1)))
-    prisma = (re.search(r'provider\s*=\s*"(\w+)"', files.get("migration_lock.toml", ""))
-              or re.search(r'datasource\s+\w+\s*\{[^}]*?provider\s*=\s*"(\w+)"', files.get("schema.prisma", "")))
-    if prisma:
-        explicit.add(ADAPTERS.get(prisma.group(1)))
-    engine = only_engine(explicit)
-    if engine or len(explicit) > 1:
-        return engine
+    prisma = re.search(r'provider\s*=\s*"(\w+)"', files.get("migration_lock.toml", ""))
+    if prisma and ADAPTERS.get(prisma.group(1)):
+        return ADAPTERS[prisma.group(1)]
 
     deps = set()
     for m in re.finditer(r"(?m)^ {4}(pg|mysql2|trilogy) \(", files.get("Gemfile.lock", "")):
@@ -419,18 +410,17 @@ def detect_tenancy(files, file_path):
 
 
 REHEARSE_COMMANDS = {
-    "rails": 'DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate',
-    "django": 'DATABASE_URL="$SENTINEL_DATABASE" python manage.py migrate  (if settings read DATABASE_URL)',
-    "laravel": 'DB_URL="$SENTINEL_DATABASE" php artisan migrate  (DATABASE_URL before Laravel 11)',
-    "prisma": 'DATABASE_URL="$SENTINEL_DATABASE" npx prisma migrate deploy',
-    "knex": 'DATABASE_URL="$SENTINEL_DATABASE" npx knex migrate:latest  (if knexfile reads DATABASE_URL)',
+    "rails": "RAILS_ENV=sentinel bin/rails db:migrate  (with a sentinel entry in database.yml)",
+    "django": "python manage.py migrate --database=sentinel  (with a sentinel alias in DATABASES)",
+    "laravel": "php artisan migrate --database=sentinel  (with a sentinel connection in config/database.php)",
+    "prisma": "npx prisma migrate deploy  (from a shell configured for the sentinel copy)",
+    "knex": "npx knex migrate:latest --env sentinel  (with a sentinel environment in the knexfile)",
 }
 
 
 def rehearsal_note(fw):
-    # never reads SENTINEL_DATABASE or any database URL: the user's shell expands it
     return ("Rehearse first on a sentinel database: a restored copy of production, never production "
-            "itself. Export its URL as SENTINEL_DATABASE, then run and time:\n"
+            "itself, set up as its own named connection. Then run and time:\n"
             f"  {REHEARSE_COMMANDS[fw]}")
 
 
