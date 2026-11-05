@@ -124,11 +124,11 @@ Detect from dependencies: `ros-apartment` / `apartment` (Rails), `django-tenants
 Row-level tenancy (`acts_as_tenant`) shares one schema: every new unique index must include the tenant column, e.g. `add_index :users, [:account_id, :email], unique: true`.
 
 ## 13. Rehearsing on a Sentinel Database
-For DANGEROUS changes, suggest rehearsing on a sentinel database, a restored copy of production, and timing it. Give the command with `$SENTINEL_DATABASE` for the user's shell to expand:
-- Rails: `DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate`
-- Django: `DATABASE_URL="$SENTINEL_DATABASE" python manage.py migrate` (if settings read `DATABASE_URL`)
-- Laravel: `DB_URL="$SENTINEL_DATABASE" php artisan migrate` (`DATABASE_URL` before Laravel 11)
-- Prisma: `DATABASE_URL="$SENTINEL_DATABASE" npx prisma migrate deploy`
-- Knex: `DATABASE_URL="$SENTINEL_DATABASE" npx knex migrate:latest` (if the knexfile reads it)
+For DANGEROUS changes, suggest rehearsing on a sentinel database: a restored copy of production, set up as its own named connection, never production itself. Time the run. Use the framework's connection name, never a URL or credential:
+- Rails: `RAILS_ENV=sentinel bin/rails db:migrate` (a `sentinel` entry in `database.yml`)
+- Django: `python manage.py migrate --database=sentinel` (a `sentinel` alias in `DATABASES`)
+- Laravel: `php artisan migrate --database=sentinel` (a `sentinel` connection in `config/database.php`)
+- Prisma: `npx prisma migrate deploy` from a shell configured for the copy
+- Knex: `npx knex migrate:latest --env sentinel` (a `sentinel` environment in the knexfile)
 
 Never open `.env`, read database URLs, or print credentials. Remind the user the sentinel must never be production.
