@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-HOOK = Path(__file__).resolve().parent.parent / "hooks" / "migration_safety_hook.py"
+HOOK = Path(__file__).resolve().parent.parent / "scripts" / "migration_safety_hook.py"
 
 RAILS = "/app/db/migrate/20260101000000_change_things.rb"
 DJANGO = "/app/shop/migrations/0002_change_things.py"
@@ -31,8 +31,8 @@ def run_hook(home, path=RAILS, content="", tool="Write", session="s1", payload=N
         payload = {"session_id": session, "tool_name": tool, "tool_input": tool_input}
         if cwd:
             payload["cwd"] = str(cwd)
-    full_env = {**os.environ, "HOME": str(home)}
-    for var in ("DISABLE_MIGRATION_GUARD", "SENTINEL_DATABASE", "DATABASE_URL"):
+    full_env = {**os.environ, "HOME": str(home), "TMPDIR": str(home)}
+    for var in ("DISABLE_MIGRATION_GUARD", "SENTINEL_DATABASE", "DATABASE_URL", "DB_URL"):
         full_env.pop(var, None)
     full_env.update(env or {})
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
@@ -250,7 +250,7 @@ def test_disable_env_var(tmp_path):
 
 
 def test_state_files_are_written_under_home_and_old_ones_pruned(tmp_path):
-    claude = tmp_path / ".claude"
+    claude = tmp_path / "db-migration-guard"
     claude.mkdir()
     old = claude / "migration_guard_state_old.json"
     fresh = claude / "migration_guard_state_fresh.json"
@@ -272,4 +272,9 @@ def test_state_files_are_written_under_home_and_old_ones_pruned(tmp_path):
 def test_hostile_session_id_stays_inside_claude_dir(tmp_path):
     run_hook(tmp_path, RAILS, "add_index :t, :c", session="../../evil")
     files = [p for p in tmp_path.rglob("*") if p.is_file()]
-    assert files and all(p.parent == tmp_path / ".claude" for p in files)
+    assert files and all(p.parent == tmp_path / "db-migration-guard" for p in files)
+
+
+def test_never_touches_claude_config_dir(tmp_path):
+    run_hook(tmp_path, RAILS, "add_index :t, :c")
+    assert not (tmp_path / ".claude").exists()

@@ -1,6 +1,6 @@
 # db-migration-guard
 
-A Claude Code plugin that catches dangerous database migration patterns before they reach production.
+A plugin that catches dangerous database migration patterns before they reach production.
 
 ## What It Does
 
@@ -23,34 +23,48 @@ A Claude Code plugin that catches dangerous database migration patterns before t
 
 ## Usage
 
-### Automatic Protection (Hooks)
+### Automatic Protection (Hook)
 
-The plugin automatically checks migration file edits. DANGEROUS patterns block the edit with an explanation; WARNING patterns are passed to Claude as context without blocking. No action needed - it runs whenever you create or edit a migration file.
+A prompt hook checks every migration edit in Claude Code. It blocks DANGEROUS changes (dropping a column or table, renaming, changing a column type, removing an index) and tells Claude the safe pattern. Everything else goes through.
 
-Disable with the environment variable:
+To go ahead with a change you have reviewed, ask Claude to add the comment `migration-guard: confirmed` to the migration (Rails `safety_assured` blocks also pass). The hook is a single model call per Edit/Write, so it adds a short delay to file edits.
 
-```
-DISABLE_MIGRATION_GUARD=1
-```
+### Skill: engine, tenancy and sentinel guidance
 
-### Database engine detection
+The `migrate-check` skill carries the detailed advice, on Claude.ai as well as in Claude Code:
 
-The hook walks up from the migration file to the git root and reads `config/database.yml`, `.env` / `config/database.php`, Prisma's `migration_lock.toml` / `schema.prisma`, then driver dependencies (`Gemfile.lock`, `requirements*.txt`, `pyproject.toml`, `package.json`). If it finds exactly one of PostgreSQL or MySQL, warnings use that engine's fix. Otherwise it shows advice for both.
-
-### Multi-tenant projects
+- **PostgreSQL vs MySQL**: detected from `config/database.yml`, `config/database.php`, Prisma's provider, or driver dependencies. PostgreSQL gets `CONCURRENTLY` and `NOT VALID` patterns; MySQL gets `ALGORITHM=INPLACE, LOCK=NONE`, gh-ost and pt-online-schema-change.
+- **Multi-tenant projects**:
 
 | Library | Model | Extra advice |
 |---|---|---|
-| `ros-apartment`, `apartment` | schema per tenant | fan-out note, `rake apartment:migrate` |
-| `django-tenants`, `django-tenant-schemas` | schema per tenant | fan-out note, `migrate_schemas` |
-| `stancl/tenancy` | database per tenant | fan-out note, `php artisan tenants:migrate` |
-| `spatie/laravel-multitenancy` | database per tenant | fan-out note |
-| `database/migrations/tenant/` folder | per tenant | fan-out note |
-| `acts_as_tenant` | shared schema | warns when a unique index lacks the tenant column |
+| `ros-apartment`, `apartment` | schema per tenant | fan-out, `rake apartment:migrate` |
+| `django-tenants`, `django-tenant-schemas` | schema per tenant | fan-out, `migrate_schemas` |
+| `stancl/tenancy` | database per tenant | fan-out, `php artisan tenants:migrate` |
+| `spatie/laravel-multitenancy` | database per tenant | fan-out |
+| `database/migrations/tenant/` folder | per tenant | fan-out |
+| `acts_as_tenant` | shared schema | unique indexes must include the tenant column |
 
-### Sentinel database
+- **Sentinel database**: for DANGEROUS changes, a command to rehearse on a restored copy of production, e.g. `DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate`. Export `SENTINEL_DATABASE` in your shell. Nothing in the plugin reads `.env`, database URLs or other credentials, or runs migrations.
 
-Point `SENTINEL_DATABASE` at a copy of production (in your environment or `.env`). When a DANGEROUS change is found, the hook adds the exact command to rehearse the migration against it, e.g. `DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate`. The password is masked, and the hook refuses if `SENTINEL_DATABASE` equals `DATABASE_URL`. The hook never runs migrations itself.
+### Optional: stricter local checker
+
+`scripts/migration_safety_hook.py` is a tested, deterministic version of all the checks above (engine-specific fixes, tenancy, unvalidated foreign keys and CHECKs, MySQL `ALGORITHM=COPY`, and more). The plugin does not register it. To use it, copy it into your project and add it to `.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [{ "type": "command", "command": "python3 \"$CLAUDE_PROJECT_DIR/scripts/migration_safety_hook.py\"" }]
+      }
+    ]
+  }
+}
+```
+
+It blocks DANGEROUS changes once per file and pattern, passes WARNINGs to Claude without blocking, keeps state in the system temp folder, and can be disabled with `DISABLE_MIGRATION_GUARD=1`.
 
 ### Slash Command
 
@@ -83,8 +97,8 @@ The `migration-reviewer` agent performs deep analysis - cross-referencing schema
 ## Risk Levels
 
 - **SAFE** - Adding nullable columns, creating new tables, adding indexes concurrently
-- **WARNING** (shown to Claude, does not block) - NOT NULL columns without a default, blocking index builds, unique constraints, unvalidated foreign keys and CHECKs, SET NOT NULL, MySQL `ALGORITHM=COPY` / `LOCK=EXCLUSIVE`, `CONCURRENTLY` on MySQL, tenant-less unique indexes, data changes mixed into schema migrations
-- **DANGEROUS** (blocks the edit once per file and pattern) - Dropping columns/tables, renames, column type changes, removing indexes
+- **WARNING** (flagged by the skill and `/migrate-check`, never blocks) - NOT NULL columns without a default, blocking index builds, unique constraints, unvalidated foreign keys and CHECKs, SET NOT NULL, MySQL `ALGORITHM=COPY` / `LOCK=EXCLUSIVE`, `CONCURRENTLY` on MySQL, tenant-less unique indexes, data changes mixed into schema migrations
+- **DANGEROUS** (blocked by the hook until confirmed) - Dropping columns/tables, renames, column type changes, removing indexes
 
 ## Examples
 
