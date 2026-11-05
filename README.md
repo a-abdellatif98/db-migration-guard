@@ -9,6 +9,10 @@ A Claude Code plugin that catches dangerous database migration patterns before t
 - Suggests zero-downtime migration patterns (add/backfill/swap/drop)
 - Flags NOT NULL additions without defaults
 - Catches mixed data/schema migrations
+- Flags unvalidated foreign keys, CHECK constraints and SET NOT NULL scans
+- Detects PostgreSQL vs MySQL and gives engine-specific fixes (CONCURRENTLY and NOT VALID vs ALGORITHM=INPLACE and online schema change tools)
+- Detects multi-tenant setups (Apartment, django-tenants, stancl/tenancy, spatie, acts_as_tenant)
+- Suggests rehearsing DANGEROUS changes on a sentinel database (`SENTINEL_DATABASE`)
 - Works across Rails, Django, Laravel, Prisma, and Knex
 
 ## Installation
@@ -28,6 +32,25 @@ Disable with the environment variable:
 ```
 DISABLE_MIGRATION_GUARD=1
 ```
+
+### Database engine detection
+
+The hook walks up from the migration file to the git root and reads `config/database.yml`, `.env` / `config/database.php`, Prisma's `migration_lock.toml` / `schema.prisma`, then driver dependencies (`Gemfile.lock`, `requirements*.txt`, `pyproject.toml`, `package.json`). If it finds exactly one of PostgreSQL or MySQL, warnings use that engine's fix. Otherwise it shows advice for both.
+
+### Multi-tenant projects
+
+| Library | Model | Extra advice |
+|---|---|---|
+| `ros-apartment`, `apartment` | schema per tenant | fan-out note, `rake apartment:migrate` |
+| `django-tenants`, `django-tenant-schemas` | schema per tenant | fan-out note, `migrate_schemas` |
+| `stancl/tenancy` | database per tenant | fan-out note, `php artisan tenants:migrate` |
+| `spatie/laravel-multitenancy` | database per tenant | fan-out note |
+| `database/migrations/tenant/` folder | per tenant | fan-out note |
+| `acts_as_tenant` | shared schema | warns when a unique index lacks the tenant column |
+
+### Sentinel database
+
+Point `SENTINEL_DATABASE` at a copy of production (in your environment or `.env`). When a DANGEROUS change is found, the hook adds the exact command to rehearse the migration against it, e.g. `DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate`. The password is masked, and the hook refuses if `SENTINEL_DATABASE` equals `DATABASE_URL`. The hook never runs migrations itself.
 
 ### Slash Command
 
@@ -60,7 +83,7 @@ The `migration-reviewer` agent performs deep analysis - cross-referencing schema
 ## Risk Levels
 
 - **SAFE** - Adding nullable columns, creating new tables, adding indexes concurrently
-- **WARNING** (shown to Claude, does not block) - NOT NULL columns without a default, non-concurrent indexes, unique constraints, data changes mixed into schema migrations
+- **WARNING** (shown to Claude, does not block) - NOT NULL columns without a default, blocking index builds, unique constraints, unvalidated foreign keys and CHECKs, SET NOT NULL, MySQL `ALGORITHM=COPY` / `LOCK=EXCLUSIVE`, `CONCURRENTLY` on MySQL, tenant-less unique indexes, data changes mixed into schema migrations
 - **DANGEROUS** (blocks the edit once per file and pattern) - Dropping columns/tables, renames, column type changes, removing indexes
 
 ## Examples
@@ -110,6 +133,13 @@ class AddIndexToOrders < ActiveRecord::Migration[7.0]
     add_index :orders, :customer_id, algorithm: :concurrently
   end
 end
+```
+
+## Development
+
+```
+pip install pytest
+python3 -m pytest tests
 ```
 
 ## License
