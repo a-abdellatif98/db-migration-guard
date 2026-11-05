@@ -747,8 +747,6 @@ def format_findings(file_path, names, engine=None, tenancy=None, notes=()):
 
 
 def main():
-    if os.environ.get("DISABLE_MIGRATION_GUARD", "0") == "1":
-        return 0
     try:
         data = json.loads(sys.stdin.read())
     except ValueError:
