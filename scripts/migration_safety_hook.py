@@ -6,6 +6,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 
 STATE_MAX_AGE_SECONDS = 7 * 86400
@@ -295,7 +296,7 @@ def framework_for(path):
 
 
 PROJECT_FILES = [
-    "Gemfile.lock", "config/database.yml", ".env", "config/database.php", "composer.json",
+    "Gemfile.lock", "config/database.yml", "config/database.php", "composer.json",
     "package.json", "requirements.txt", "requirements/base.txt", "requirements/production.txt",
     "pyproject.toml", "Pipfile", "poetry.lock", "migration_lock.toml", "schema.prisma",
 ]
@@ -363,9 +364,7 @@ def detect_engine(files):
     explicit = set()
     for m in re.finditer(r"(?m)^\s*adapter:\s*['\"]?(\w+)", files.get("config/database.yml", "")):
         explicit.add(ADAPTERS.get(m.group(1)))
-    env = re.search(r"(?m)^\s*DB_CONNECTION\s*=\s*['\"]?(\w+)", files.get(".env", ""))
-    if not env:
-        env = re.search(r"env\(\s*['\"]DB_CONNECTION['\"]\s*,\s*['\"](\w+)", files.get("config/database.php", ""))
+    env = re.search(r"env\(\s*['\"]DB_CONNECTION['\"]\s*,\s*['\"](\w+)", files.get("config/database.php", ""))
     if env:
         explicit.add(ADAPTERS.get(env.group(1)))
     prisma = (re.search(r'provider\s*=\s*"(\w+)"', files.get("migration_lock.toml", ""))
@@ -419,26 +418,6 @@ def detect_tenancy(files, file_path):
     return None
 
 
-def mask_url(url):
-    return re.sub(r"(//[^:/@]+):[^@]*@", r"\1:***@", url)
-
-
-def sentinel_url(files):
-    url = os.environ.get("SENTINEL_DATABASE")
-    if not url:
-        m = re.search(r"(?m)^\s*SENTINEL_DATABASE\s*=\s*['\"]?([^'\"\s]+)", files.get(".env", ""))
-        url = m.group(1) if m else ""
-    return url.strip()
-
-
-def production_urls(files):
-    urls = {(os.environ.get(k) or "").strip() for k in ("DATABASE_URL", "DB_URL")}
-    for m in re.finditer(r"(?m)^\s*(?:DATABASE_URL|DB_URL)\s*=\s*['\"]?([^'\"\s]+)", files.get(".env", "")):
-        urls.add(m.group(1))
-    urls.discard("")
-    return urls
-
-
 REHEARSE_COMMANDS = {
     "rails": 'DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate',
     "django": 'DATABASE_URL="$SENTINEL_DATABASE" python manage.py migrate  (if settings read DATABASE_URL)',
@@ -448,23 +427,17 @@ REHEARSE_COMMANDS = {
 }
 
 
-def rehearsal_note(fw, files):
-    url = sentinel_url(files)
-    if not url:
-        return ("Rehearse first: run this on a shadow copy of production (a restored recent backup), "
-                "time it, and watch for locks. Set SENTINEL_DATABASE to that copy's URL and this "
-                "check will give the exact command.")
-    if url in production_urls(files):
-        return ("SENTINEL_DATABASE is the same as DATABASE_URL. Do not rehearse against it: "
-                "point SENTINEL_DATABASE at a separate copy of production.")
-    return (f"Rehearse on the sentinel database ({mask_url(url)}) before deploying, and time it:\n"
+def rehearsal_note(fw):
+    # never reads SENTINEL_DATABASE or any database URL: the user's shell expands it
+    return ("Rehearse first on a sentinel database: a restored copy of production, never production "
+            "itself. Export its URL as SENTINEL_DATABASE, then run and time:\n"
             f"  {REHEARSE_COMMANDS[fw]}")
 
 
-def context_notes(names, fw, engine, tenancy, files, content):
+def context_notes(names, fw, engine, tenancy, content):
     notes = []
     if any(MESSAGES[n][0] == DANGEROUS for n in names):
-        notes.append(rehearsal_note(fw, files))
+        notes.append(rehearsal_note(fw))
     if engine == "postgresql" and not re.search(r"(?i)lock_timeout", content):
         notes.append("PostgreSQL: set a lock_timeout (e.g. SET lock_timeout = '5s') so blocked DDL fails "
                      "fast instead of stalling every query queued behind it. Rails: strong_migrations "
@@ -715,7 +688,7 @@ def check_content(content, fw, engine=None, tenancy=None):
 
 
 def state_dir():
-    return os.path.join(os.path.expanduser("~"), ".claude")
+    return os.path.join(tempfile.gettempdir(), "db-migration-guard")
 
 
 def state_file(session_id):
@@ -819,7 +792,7 @@ def main():
     shown.update(f"{file_path}:{n}" for n in names)
     save_shown(session_id, shown)
 
-    notes = context_notes(names, fw, engine, tenancy, files, strip_comments(content, fw))
+    notes = context_notes(names, fw, engine, tenancy, strip_comments(content, fw))
     text = format_findings(file_path, names, engine, tenancy, notes)
     if any(MESSAGES[n][0] == DANGEROUS for n in names):
         print(text, file=sys.stderr)
