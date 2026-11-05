@@ -2,6 +2,24 @@
 
 A plugin that catches dangerous database migration patterns before they reach production.
 
+## Example
+
+Claude edits `db/migrate/20260101120000_remove_email_from_users.rb`:
+
+```ruby
+class RemoveEmailFromUsers < ActiveRecord::Migration[7.0]
+  def change
+    remove_column :users, :email, :string
+  end
+end
+```
+
+The hook blocks the edit and returns this reason to Claude:
+
+```
+Dropping column users.email in db/migrate/20260101120000_remove_email_from_users.rb: existing code still reading or writing it will fail, and the data is lost with no rollback. Safe pattern: stop writing, then stop reading, deploy, and only then drop the column. If the user explicitly confirmed this change, add the comment migration-guard: confirmed to the migration and retry.
+```
+
 ## What It Does
 
 - Detects destructive operations (dropping columns/tables, renames, type changes)
