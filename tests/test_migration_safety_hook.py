@@ -16,7 +16,7 @@ PRISMA = "/app/prisma/migrations/20260101000000_change_things/migration.sql"
 KNEX = "/app/migrations/20260101000000_change_things.js"
 
 
-def run_hook(home, path=RAILS, content="", tool="Write", session="s1", payload=None, env=None):
+def run_hook(home, path=RAILS, content="", tool="Write", session="s1", payload=None, env=None, cwd=None):
     if payload is None:
         tool_input = {"file_path": path}
         if tool == "Write":
@@ -29,8 +29,11 @@ def run_hook(home, path=RAILS, content="", tool="Write", session="s1", payload=N
                 {"old_string": "b", "new_string": content},
             ]
         payload = {"session_id": session, "tool_name": tool, "tool_input": tool_input}
+        if cwd:
+            payload["cwd"] = str(cwd)
     full_env = {**os.environ, "HOME": str(home)}
-    full_env.pop("DISABLE_MIGRATION_GUARD", None)
+    for var in ("DISABLE_MIGRATION_GUARD", "SENTINEL_DATABASE", "DATABASE_URL"):
+        full_env.pop(var, None)
     full_env.update(env or {})
     stdin = payload if isinstance(payload, str) else json.dumps(payload)
     return subprocess.run(

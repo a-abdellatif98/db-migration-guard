@@ -25,6 +25,8 @@ When this command is invoked:
 
    If the user provided a path argument, search within that path. Otherwise, search from the project root.
 
+   Then detect the database engine (PostgreSQL or MySQL) and any multi-tenancy library, and check whether `SENTINEL_DATABASE` is set. Follow `skills/migrate-check/references/patterns.md` (patterns 5 and 9 to 13) for engine-specific fixes, tenant fan-out, and the sentinel rehearsal command. Never print the sentinel URL's password.
+
 2. **Find pending/recent migration files** using Glob. Sort by filename (most recent first). Read each migration file.
 
 3. **Analyze each migration** for these risk categories:
@@ -37,7 +39,10 @@ When this command is invoked:
 
    **WARNING (review carefully):**
    - Adding NOT NULL without a default value
-   - Adding indexes without concurrency (PostgreSQL)
+   - Index builds that block writes (PostgreSQL without CONCURRENTLY, MySQL without ALGORITHM=INPLACE)
+   - Foreign keys or CHECK constraints added without NOT VALID (PostgreSQL), SET NOT NULL on existing columns
+   - MySQL ALGORITHM=COPY or LOCK=SHARED/EXCLUSIVE
+   - Unique indexes without the tenant column (row-level tenancy)
    - Mixing data and schema changes in one migration
    - Adding unique constraints to tables that may have duplicates
    - Missing reversibility (no `down` method or rollback)
