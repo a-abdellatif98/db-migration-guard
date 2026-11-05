@@ -344,3 +344,31 @@ def test_ruby_references_inside_alter_file_is_not_sql_fk(tmp_path):
 def test_rails_execute_raw_fk_is_flagged(tmp_path):
     content = 'execute "ALTER TABLE o ADD CONSTRAINT f FOREIGN KEY (u) REFERENCES users(id)"'
     assert_warned(hook(tmp_path, PG_FILES, RAILS_REL, content), "fk_validation")
+
+
+def test_django_unique_constraint_is_flagged(tmp_path):
+    content = ("migrations.AddConstraint(model_name='u', "
+               "constraint=models.UniqueConstraint(fields=['email'], name='u_email'))")
+    assert_warned(hook(tmp_path, {}, DJANGO_REL, content), "unique_constraint")
+
+
+def test_mysql_concurrently_does_not_hide_other_plain_rails_index(tmp_path):
+    content = "add_index :t, :a, algorithm: :concurrently\nadd_index :t, :b"
+    ctx = warning_context(hook(tmp_path, MYSQL_FILES, RAILS_REL, content))
+    assert "[WARNING] concurrently_on_mysql" in ctx
+    assert "[WARNING] non_concurrent_index" in ctx
+
+
+def test_walk_stops_at_cwd(tmp_path):
+    (tmp_path / "config").mkdir()
+    (tmp_path / "config" / "database.yml").write_text(PG_YML)
+    root = tmp_path / "proj"
+    (root / "db" / "migrate").mkdir(parents=True)
+    ctx = warning_context(run_hook(tmp_path, str(root / RAILS_REL), "add_index :t, :c", cwd=root))
+    assert "PostgreSQL" not in ctx
+
+
+def test_sentinel_equal_to_dotenv_database_url_is_refused(tmp_path):
+    files = {".env": "DATABASE_URL=mysql://prod/db\nSENTINEL_DATABASE=mysql://prod/db\n"}
+    result = hook(tmp_path, files, RAILS_REL, "remove_column :t, :c")
+    assert "same as DATABASE_URL" in result.stderr

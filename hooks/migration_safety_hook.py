@@ -189,15 +189,16 @@ ENGINE_MESSAGES = {
             "- For large tables use pt-online-schema-change (gh-ost does not support foreign keys)"
         ),
         "check_validation": (
-            "MySQL has no NOT VALID, so adding a CHECK constraint checks every row and may rebuild "
-            "the table while blocking writes.\n\n"
+            "MySQL has no NOT VALID, so adding a CHECK constraint checks every existing row and may "
+            "need a table copy that blocks writes.\n\n"
             "- Fix violating rows first\n"
             "- For large tables use gh-ost or pt-online-schema-change"
         ),
         "set_not_null": (
-            "Changing a column to NOT NULL rebuilds the table, and fails in strict mode if any NULLs remain.\n\n"
+            "Changing a column to NOT NULL rebuilds the table (in place, writes still allowed) and fails "
+            "if any NULLs remain. On large tables the rebuild is slow and lags replicas.\n\n"
             "- Backfill NULLs first, in batches\n"
-            "- For large tables use gh-ost or pt-online-schema-change"
+            "- Use ALGORITHM=INPLACE, LOCK=NONE, or gh-ost / pt-online-schema-change for large tables"
         ),
     },
 }
@@ -318,11 +319,12 @@ def read_text(path):
 
 
 def project_files(file_path, cwd):
-    """Nearest copy of each known project file, walking up from the migration's directory."""
+    """Nearest copy of each known project file, walking up from the migration to the git root or cwd."""
     p = file_path.replace("\\", "/")
     if not os.path.isabs(p) and cwd:
         p = os.path.join(cwd, p)
     d = os.path.dirname(os.path.abspath(p))
+    stop = os.path.abspath(cwd) if cwd else None
     found = {}
     for _ in range(MAX_LEVELS):
         for rel in PROJECT_FILES:
@@ -331,7 +333,7 @@ def project_files(file_path, cwd):
                 if text is not None:
                     found[rel] = text
         parent = os.path.dirname(d)
-        if os.path.isdir(os.path.join(d, ".git")) or parent == d:
+        if os.path.isdir(os.path.join(d, ".git")) or d == stop or parent == d:
             break
         d = parent
     return found
@@ -429,6 +431,14 @@ def sentinel_url(files):
     return url.strip()
 
 
+def production_urls(files):
+    urls = {(os.environ.get(k) or "").strip() for k in ("DATABASE_URL", "DB_URL")}
+    for m in re.finditer(r"(?m)^\s*(?:DATABASE_URL|DB_URL)\s*=\s*['\"]?([^'\"\s]+)", files.get(".env", "")):
+        urls.add(m.group(1))
+    urls.discard("")
+    return urls
+
+
 REHEARSE_COMMANDS = {
     "rails": 'DATABASE_URL="$SENTINEL_DATABASE" bin/rails db:migrate',
     "django": 'DATABASE_URL="$SENTINEL_DATABASE" python manage.py migrate  (if settings read DATABASE_URL)',
@@ -444,7 +454,7 @@ def rehearsal_note(fw, files):
         return ("Rehearse first: run this on a shadow copy of production (a restored recent backup), "
                 "time it, and watch for locks. Set SENTINEL_DATABASE to that copy's URL and this "
                 "check will give the exact command.")
-    if url == (os.environ.get("DATABASE_URL") or "").strip():
+    if url in production_urls(files):
         return ("SENTINEL_DATABASE is the same as DATABASE_URL. Do not rehearse against it: "
                 "point SENTINEL_DATABASE at a separate copy of production.")
     return (f"Rehearse on the sentinel database ({mask_url(url)}) before deploying, and time it:\n"
@@ -666,6 +676,7 @@ def detect(fw, content, engine=None, tenancy=None):
             if re.search(r"\bCheckConstraint\b", call):
                 found.add("check_validation")
             if re.search(r"\bUniqueConstraint\b", call):
+                found.add("unique_constraint")
                 unique_stmts.append(call)
     elif fw == "laravel":
         for stmt in php_alter_statements(content):
@@ -686,7 +697,8 @@ def detect(fw, content, engine=None, tenancy=None):
     if engine == "mysql":
         if CONCURRENTLY.search(content):
             found.add("concurrently_on_mysql")
-            found.discard("non_concurrent_index")
+            if fw != "rails":
+                found.discard("non_concurrent_index")
         elif fw != "rails" and MYSQL_ONLINE.search(content):
             found.discard("non_concurrent_index")
     elif engine == "postgresql":
