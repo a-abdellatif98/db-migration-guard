@@ -45,7 +45,7 @@ The `migrate-check` skill carries the detailed advice, on Claude.ai as well as i
 | `database/migrations/tenant/` folder | per tenant | fan-out |
 | `acts_as_tenant` | shared schema | unique indexes must include the tenant column |
 
-- **Sentinel database**: for DANGEROUS changes, a command to rehearse on a restored copy of production set up as a named `sentinel` connection, e.g. `RAILS_ENV=sentinel bin/rails db:migrate` or `php artisan migrate --database=sentinel`. Nothing in the plugin reads `.env`, database config, URLs or other credentials, or runs migrations.
+- **Sentinel database**: for DANGEROUS changes, a command to rehearse on a restored copy of production set up as a named `sentinel` connection, e.g. `RAILS_ENV=sentinel bin/rails db:migrate` or `php artisan migrate --database=sentinel`. Nothing in the plugin reads environment files, database config, URLs or other credentials, or runs migrations.
 
 ### Optional: stricter local checker
 
@@ -64,7 +64,7 @@ The `migrate-check` skill carries the detailed advice, on Claude.ai as well as i
 }
 ```
 
-It blocks DANGEROUS changes once per file and pattern, passes WARNINGs to Claude without blocking, keeps state in the system temp folder, and can be disabled with `DISABLE_MIGRATION_GUARD=1`.
+It blocks DANGEROUS changes once per file and pattern, passes WARNINGs to Claude without blocking, keeps state in the system temp folder; to turn it off, remove it from your settings.
 
 ### Slash Command
 

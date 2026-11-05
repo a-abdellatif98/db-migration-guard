@@ -244,9 +244,10 @@ def test_malformed_or_irrelevant_input_exits_zero(tmp_path, payload):
     assert_silent(run_hook(tmp_path, payload=payload))
 
 
-def test_disable_env_var(tmp_path):
-    result = run_hook(tmp_path, RAILS, "remove_column :t, :c", env={"DISABLE_MIGRATION_GUARD": "1"})
-    assert_silent(result)
+def test_script_reads_no_environment_variables():
+    source = HOOK.read_text()
+    assert "os.environ" not in source
+    assert "getenv" not in source
 
 
 def test_state_files_are_written_under_home_and_old_ones_pruned(tmp_path):
