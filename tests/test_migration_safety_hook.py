@@ -141,6 +141,10 @@ BLOCKED = [
     ("django_remove_index", DJANGO, "migrations.RemoveIndex(model_name='t', name='i')", "remove_index"),
     ("laravel_drop_index", LARAVEL, "$table->dropIndex('i');", "remove_index"),
     ("sql_drop_index", PRISMA, 'DROP INDEX "i";', "remove_index"),
+    ("windows_path_rails", r"C:\app\db\migrate\20240101_rm.rb",
+     "remove_column :users, :email, :string", "drop_column"),
+    ("windows_path_prisma", r"C:\app\prisma\migrations\2\migration.sql",
+     'ALTER TABLE "u" DROP COLUMN "e";', "drop_column"),
 ]
 
 
