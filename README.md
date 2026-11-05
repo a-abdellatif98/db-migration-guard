@@ -14,14 +14,14 @@ A Claude Code plugin that catches dangerous database migration patterns before t
 ## Installation
 
 ```
-/plugin install db-migration-guard@claude-plugin-directory
+/plugin install db-migration-guard@claude-plugins-official
 ```
 
 ## Usage
 
 ### Automatic Protection (Hooks)
 
-The plugin automatically intercepts migration file edits and warns about dangerous patterns. No action needed - it runs whenever you create or edit a migration file.
+The plugin automatically checks migration file edits. DANGEROUS patterns block the edit with an explanation; WARNING patterns are passed to Claude as context without blocking. No action needed - it runs whenever you create or edit a migration file.
 
 Disable with the environment variable:
 
@@ -59,9 +59,9 @@ The `migration-reviewer` agent performs deep analysis - cross-referencing schema
 
 ## Risk Levels
 
-- **SAFE** - Adding nullable columns, new tables, concurrent indexes
-- **WARNING** - NOT NULL without default, non-concurrent indexes, type changes on small tables
-- **DANGEROUS** - Dropping columns/tables, renames, type changes on large tables, removing indexes
+- **SAFE** - Adding nullable columns, creating new tables, adding indexes concurrently
+- **WARNING** (shown to Claude, does not block) - NOT NULL columns without a default, non-concurrent indexes, unique constraints, data changes mixed into schema migrations
+- **DANGEROUS** (blocks the edit once per file and pattern) - Dropping columns/tables, renames, column type changes, removing indexes
 
 ## Examples
 

@@ -2,7 +2,7 @@
 name: migration-reviewer
 description: Deep migration analysis agent that reviews database migrations for safety, performance, and correctness
 model: sonnet
-allowed-tools: [Read, Glob, Grep, Bash]
+tools: Read, Glob, Grep, Bash
 ---
 
 # Migration Reviewer Agent

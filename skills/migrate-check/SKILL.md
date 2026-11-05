@@ -41,7 +41,7 @@ When a migration file is created or edited, check for these patterns. Per-framew
 ## Risk Levels
 
 - **SAFE**: adding nullable columns, adding indexes concurrently, creating new tables
-- **WARNING**: adding NOT NULL with defaults, adding unique constraints, changing defaults
+- **WARNING**: adding NOT NULL without a default, non-concurrent indexes, adding unique constraints, data changes inside schema migrations, changing defaults
 - **DANGEROUS**: dropping columns/tables, renaming, type changes, removing indexes
 
 ## Safe Migration Checklist
